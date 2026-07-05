@@ -1,0 +1,24 @@
+name: CI
+
+# Lance les tests unitaires natifs à chaque push et pull request
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests-natifs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installer PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Exécuter les tests unitaires (env native)
+        run: pio test -e native

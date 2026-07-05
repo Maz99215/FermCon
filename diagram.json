@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "author": "Samy Bouaziz",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-c6-devkitc-1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-st7789",
+      "id": "display",
+      "top": 100,
+      "left": 200,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-ds18b20",
+      "id": "temp",
+      "top": 200,
+      "left": 200,
+      "attrs": {
+        "temperature": 20
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "cool",
+      "top": 300,
+      "left": 100,
+      "attrs": {
+        "color": "blue"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "heat",
+      "top": 300,
+      "left": 300,
+      "attrs": {
+        "color": "red"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "pullup",
+      "top": 250,
+      "left": 250,
+      "attrs": {
+        "resistance": "4.7k"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "coolResistor",
+      "top": 325,
+      "left": 75,
+      "attrs": {
+        "resistance": "220"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "heatResistor",
+      "top": 325,
+      "left": 325,
+      "attrs": {
+        "resistance": "220"
+      }
+    }
+  ],
+  "connections": [
+    ["esp:GPIO6", "display:SCL"],
+    ["esp:GPIO7", "display:SDA"],
+    ["esp:GPIO10", "display:CS"],
+    ["esp:GPIO11", "display:DC"],
+    ["esp:GPIO21", "display:RES"],
+    ["esp:GPIO22", "display:BLK"],
+    ["display:VCC", "esp:3V3"],
+    ["display:GND", "esp:GND"],
+    ["esp:GPIO4", "temp:DQ"],
+    ["temp:DQ", "pullup:1"],
+    ["pullup:2", "esp:3V3"],
+    ["esp:GPIO2", "coolResistor:1"],
+    ["coolResistor:2", "cool:A"],
+    ["cool:C", "esp:GND"],
+    ["esp:3V3", "heatResistor:1"],
+    ["heatResistor:2", "heat:A"],
+    ["heat:C", "esp:GPIO3"]
+  ]
+}
