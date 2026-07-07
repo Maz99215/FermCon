@@ -14,7 +14,7 @@ public:
     void startBatch();
     void resetBatch();
     uint16_t getFermentDays();
-    void toJson(JsonObject obj);
+    void toJson(JsonObject obj) const;
     void fromJson(const JsonObjectConst& obj);
 
 private:

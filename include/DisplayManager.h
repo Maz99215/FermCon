@@ -2,7 +2,7 @@
 #define DISPLAY_MANAGER_H
 
 #include <Arduino.h>
-#include <TFT_eSPI.h>
+#include "LGFX_Config.hpp" 
 #include "Config.h"
 
 struct DisplayData {
@@ -35,7 +35,7 @@ public:
   void forceRedraw();
 
 private:
-  TFT_eSPI tft;
+  LGFX tft;
   DisplayData lastData;
   unsigned long lastUpdateTime;
 

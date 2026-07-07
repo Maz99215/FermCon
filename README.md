@@ -1,121 +1,66 @@
-# FermCon — Firmware (mise à jour écran v2 + fermentation)
+# FermCon - Migration TFT_eSPI -> LovyanGFX (ESP32-C6 + ST7789 76x284)
 
-Contrôleur de fermentation bière sur **ESP32-C6** (Arduino + PlatformIO).
-Cette archive contient : écran **ST7789** en **paysage plein écran** (nouveau
-layout), actionneurs **SSR froid / relais chaud**, **profils** de température
-(paliers + rampes), et le **suivi de fermentation** (libellé d'étape libre +
-jours + batterie iSpindel + last seen + état MQTT).
+## Pourquoi
+TFT_eSPI ne compile pas sur ESP32-C6 (Arduino Core 3.x / IDF 5.x) :
+acces registres GPIO et SPI incompatibles. Lib de facto abandonnee.
+LovyanGFX supporte nativement le C6 et couvre ~90% de l'API TFT_eSPI.
 
-## Arborescence
-```
-FermCon_MAJ/
-├── platformio.ini            # config ST7789 + brochage
-├── diagram.json              # simulation Wokwi
-├── WIRING.md                 # câblage Wokwi / réel
-├── include/
-│   ├── Config.h
-│   ├── RelayController.h
-│   ├── TemperatureController.h
-│   ├── DisplayManager.h          # v2 : DisplayData enrichie
-│   ├── ProfileManager.h
-│   ├── FermentationInfo.h        # NOUVEAU
-│   └── ConfigStore.h             # fusionné profil + fermentation
-├── src/
-│   ├── main.cpp                     # intégration de référence
-│   ├── RelayController.cpp
-│   ├── TemperatureController.cpp
-│   ├── DisplayManager.cpp           # v2 : layout paysage plein écran
-│   ├── ProfileManager.cpp
-│   ├── FermentationInfo.cpp         # NOUVEAU
-│   ├── ConfigStore.cpp              # fusionné profil + fermentation
-│   └── WebServerManager_routes.cpp  # EXTRAIT : routes profil + fermentation
-└── data/web/
-    ├── index.html            # profil + fermentation
-    └── app.js                # profil + fermentation
-```
+## Contenu
+- `include/LGFX_Config.hpp` : config ecran (equivalent de ton User_Setup / build_flags).
 
-## Écran v2 (paysage 320×240)
-- Barre haut : `J{jours}` + nom d'étape (libellé libre) + batterie iSpindel (%).
-- Panneau gauche : température géante + consigne + chips FROID/CHAUD.
-- Panneau droit : densité SG + OG + atténuation + angle.
-- Bande profil : étape courante + barre de progression.
-- Bande connexions : iSpindel « vu il y a X min » + état MQTT.
-- Pied de page : IP (petite, discrète).
+## 1. platformio.ini
+Dans `[env:esp32-c6]` :
 
-## Build & flash
-```
-pio run
-pio run -t upload
-pio run -t uploadfs      # obligatoire pour data/web/
-```
-Mode test iSpindel Wokwi : `build_flags = -DWOKWI_SIM`.
+a) Remplacer dans `lib_deps` :
+   -  bodmer/TFT_eSPI
+   +  lovyan03/LovyanGFX@^1.2.7
 
-## Points d'intégration
-- **main.cpp / loop** : alimenter la struct `DisplayData` à chaque rafraîchissement
-  (température, consigne, coolOn/heatOn, gravity/gravityStart/angle, battery,
-  iSpindelOnline, iSpindelLastSeenMin, mqttConnected, fermentDays = `FermentationInfo::getFermentDays()`,
-  stageName = `FermentationInfo::getStageName()`, profileStep*, ip, fault).
-- **setup** : `ConfigStore.loadFermentation(fermentInfo)` au boot ; `FermentationInfo.begin()`.
-- **WebServerManager_routes.cpp** est un EXTRAIT : fusionne les handlers dans ton
-  WebServerManager réel et adapte le constructeur (ajout du pointeur `FermentationInfo*`).
-- **ConfigStore** : fusionne avec ton ConfigStore réel (config WiFi/MQTT/Grainfather conservée).
+b) SUPPRIMER tous les build_flags TFT_eSPI (ils ne servent plus) :
+   -DUSER_SETUP_LOADED, -DST7789_DRIVER, -DTFT_WIDTH, -DTFT_HEIGHT,
+   -DTFT_MOSI, -DTFT_SCLK, -DTFT_CS, -DTFT_DC, -DTFT_RST, -DTFT_BL,
+   -DLOAD_GLCD, -DLOAD_FONT2, -DLOAD_FONT4, -DSMOOTH_FONT, -DSPI_FREQUENCY
+   (toute la config est desormais dans LGFX_Config.hpp)
 
-## Points d'attention
-- **Corps des requêtes POST web** : les handlers lisent `request->getParam("body", true)`
-  (form-urlencoded, champ `body`). Le `app.js` envoie du JSON brut. À harmoniser :
-  soit utiliser `AsyncCallbackJsonWebHandler` côté serveur, soit envoyer
-  `body=<json>` en `application/x-www-form-urlencoded` côté front.
-- **Auth web** : remplacer `authenticate("user","pass")` par tes identifiants (Config).
-- **Jours de fermentation** : exact avec NTP (epoch) ; sans NTP, fallback compteur
-  `millis()` (attention au wrap ~49 j sur très longue fermentation).
-- **Last seen iSpindel** : compteur relatif en minutes basé sur `millis()` (pas de NTP requis).
-- Polarité relais chaud (`HEAT_ACTIVE_LEVEL`) présumée LOW : à confirmer sur pièce.
-- Écran ST7789 2.25" : décommenter les offsets CGRAM dans platformio.ini si décalage.
+## 2. Placer le fichier
+Copier `include/LGFX_Config.hpp` dans le dossier `include/` du projet.
 
-## Corrections QA appliquées à la génération
-- DisplayManager v2 : `ledcAttach` (API core 3.x) OK.
-- ArduinoJson : toutes occurrences v6 (`DynamicJsonDocument`) → **v7** (`JsonDocument`).
-- WebServerManager : constructeurs divergents des 2 lots unifiés en un seul ;
-  `setupRoutes()` dédupliqué ; chaînes JSON non échappées `"{"error"...}"` corrigées ;
-  `containsKey` (v6) → `is<const char*>()` (v7).
-- ConfigStore : fusion des méthodes profil + fermentation.
-- Interface web : pages profil + fermentation fusionnées.
+## 3. Adapter le code d'affichage
+Remplacer :
+    #include <TFT_eSPI.h>
+    TFT_eSPI tft = TFT_eSPI();
+Par :
+    #include "LGFX_Config.hpp"
+    LGFX tft;
 
-## Simulation Wokwi
-`diagram.json` utilise désormais le composant réel **`wokwi-st7789`** (ESP32-C6
-+ ST7789 supportés par Wokwi). Brochage simulé identique à la cible
-(SCL=6, SDA=7, CS=10, DC=11, RES=21, BLK=22 ; DS18B20=4 ; LED froid=2, chaud=3).
-Lancer via l'extension **Wokwi for VS Code** sur l'environnement `esp32-c6`.
+Dans setup(), avant d'utiliser l'ecran :
+    tft.init();
+    tft.setRotation(0);      // 0..3 selon orientation voulue
+    tft.setBrightness(255);  // retroeclairage (0..255) - remplace digitalWrite(TFT_BL,HIGH)
+    tft.fillScreen(TFT_BLACK);
 
-## Tests unitaires (natifs, sans matériel)
-```
-pio test -e native
-```
-Couverture :
-- `test/test_relay/`        — exclusivité FROID/CHAUD, allOff, état initial.
-- `test/test_profile/`      — PALIER, interpolation RAMPE, addStep/clearSteps (16 max), isActive.
-- `test/test_fermentation/` — libellé d'étape, jours (fallback millis), reset.
-- `test/test_infra/`        — validation des mocks (millis, String).
+Le reste de l'API est quasi identique : tft.fillScreen, tft.drawString,
+tft.setTextColor, tft.setCursor, tft.print, tft.drawRect, tft.fillRect...
+Les constantes couleur (TFT_BLACK, TFT_WHITE, TFT_RED...) existent aussi.
+Sprites : remplacer `TFT_eSprite spr(&tft);` par `LGFX_Sprite spr(&tft);`.
 
-Infra : `test/mocks/Arduino.h|.cpp` (mock Arduino : String, millis, GPIO, Serial),
-`test/mocks/time_mock.h|.cpp` (remap `time()` contrôlable). L'env `native`
-ne compile que `RelayController.cpp`, `ProfileManager.cpp`, `FermentationInfo.cpp`
-(via `build_src_filter`) pour éviter les dépendances matérielles (TFT/OneWire/Async).
+## 4. Calage de l'ecran 76x284 (offsets)
+Le panneau (76x284) est plus petit que la GRAM du ST7789 (240x320) :
+il faut decaler la zone visible. Valeurs de depart dans LGFX_Config.hpp :
+    offset_x = 82   ((240-76)/2)
+    offset_y = 18   ((320-284)/2)
+Procedure de reglage :
+1. tft.fillScreen(TFT_RED); puis dessiner un cadre :
+   tft.drawRect(0,0, tft.width(), tft.height(), TFT_WHITE);
+2. Si le cadre est decale/coupe -> ajuster offset_x / offset_y de +/-2
+   jusqu'a ce que le cadre touche pile les 4 bords.
+3. Si les couleurs sont inversees -> passer cfg.invert a false.
+4. Si rouge et bleu sont echanges -> passer cfg.rgb_order a true.
 
-> NOTE : ces tests n'ont pas pu être exécutés dans l'environnement de génération
-> (pas de toolchain C++). Ils ont été **relus et corrigés** statiquement
-> (types `ProfileStep`, logique addStep/clear, mock `time()` pour les jours).
-> Lance `pio test -e native` pour confirmation chez toi.
+## 5. Build
+    pio run -e esp32-c6
+Attendu : [SUCCESS]. Plus d'erreur gpio_out_w1tc / REG_SPI_BASE.
 
-## Régulation — anti-court-cycle (corrigé)
-`TemperatureController` a été refactoré :
-- **Anti-court-cycle compresseur** : le froid ne redémarre pas avant `COMPRESSOR_MIN_OFF_S` (300s) d'arrêt.
-- **Marche minimale** : `COOL_MIN_ON_S` (120s) / `HEAT_MIN_ON_S` (60s) avant extinction.
-- **Repli sûr** sur erreur sonde (FAULT + allOff) et **timeout de sécurité** `MAX_ON_TIMEOUT_S`.
-- `begin()` antidate les extinctions pour autoriser le premier démarrage au boot.
-- **Testabilité** : sous `-DUNIT_TEST`, la dépendance DS18B20 (OneWire/DallasTemperature)
-  est retirée et `setCurrentTempForTest(float)` injecte la température ; `update()` devient
-  déterministe. Couvert par `test/test_regulation/`.
-
-> Logique validée par simulation (8 scénarios, 16/16 assertions OK). La compilation
-> C++ réelle se confirme avec `pio test -e native`.
+## Note env `native`
+L'env de tests `native` echoue car `g++` (MinGW) n'est pas installe sur
+le PC. Sans rapport avec l'ecran. Pour builder uniquement la cible reelle :
+    pio run -e esp32-c6

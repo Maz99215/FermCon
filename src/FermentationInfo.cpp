@@ -42,7 +42,7 @@ uint16_t FermentationInfo::getFermentDays() {
     }
 }
 
-void FermentationInfo::toJson(JsonObject obj) {
+void FermentationInfo::toJson(JsonObject obj) const {
     obj["stageName"] = stageName;
     obj["startEpoch"] = startEpoch;
     obj["refMillis"] = refMillis;
