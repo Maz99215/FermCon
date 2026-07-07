@@ -1,4 +1,5 @@
 #include "ProfileManager.h"
+#include "Config.h"
 
 void ProfileManager::start() {
     startTime = millis();
@@ -22,7 +23,8 @@ void ProfileManager::setActive(bool active) {
 }
 
 float ProfileManager::getCurrentSetpoint() const {
-    if (!active || stepCount == 0) return 0.0f;
+    // Repli sur: profil inactif ou vide -> consigne par defaut (jamais 0C)
+    if (!active || stepCount == 0) return DEFAULT_SETPOINT_C;
 
     unsigned long elapsed = (millis() - startTime) / 1000;
     uint32_t totalDuration = 0;
@@ -38,7 +40,6 @@ float ProfileManager::getCurrentSetpoint() const {
             }
         }
     }
-
     return steps[stepCount - 1].tempEnd;
 }
 
@@ -60,7 +61,6 @@ String ProfileManager::getCurrentStepInfo() const {
             }
         }
     }
-
     return "Termine";
 }
 
@@ -83,26 +83,28 @@ void ProfileManager::toJson(JsonObject& json) const {
     JsonArray stepsArray = json["steps"].to<JsonArray>();
     for (uint8_t i = 0; i < stepCount; i++) {
         JsonObject step = stepsArray.add<JsonObject>();
-        step["type"] = steps[i].type;
+        step["type"]      = (int)steps[i].type;
         step["tempStart"] = steps[i].tempStart;
-        step["tempEnd"] = steps[i].tempEnd;
+        step["tempEnd"]   = steps[i].tempEnd;
         step["durationS"] = steps[i].durationS;
     }
     json["startTime"] = startTime;
-    json["active"] = active;
+    json["active"]    = active;
 }
 
 void ProfileManager::fromJson(const JsonObjectConst& json) {
     name = json["name"] | "";
     JsonArrayConst stepsArray = json["steps"];
-    stepCount = stepsArray.size();
+    size_t n = stepsArray.size();
+    if (n > 16) n = 16;                 // borne anti-overflow steps[16]
+    stepCount = (uint8_t)n;
     for (uint8_t i = 0; i < stepCount; i++) {
         JsonObjectConst step = stepsArray[i];
-        steps[i].type = step["type"];
+        steps[i].type      = static_cast<ProfileStep::Type>((int)step["type"]);
         steps[i].tempStart = step["tempStart"];
-        steps[i].tempEnd = step["tempEnd"];
+        steps[i].tempEnd   = step["tempEnd"];
         steps[i].durationS = step["durationS"];
     }
     startTime = json["startTime"];
-    active = json["active"];
+    active    = json["active"];
 }

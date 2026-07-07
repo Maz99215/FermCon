@@ -2,7 +2,7 @@
 #define DISPLAY_MANAGER_H
 
 #include <Arduino.h>
-#include "LGFX_Config.hpp" 
+#include "LGFX_Config.hpp"   // fournit LGFX + les macros couleur TFT_* (compat TFT_eSPI)
 #include "Config.h"
 
 struct DisplayData {
@@ -39,28 +39,19 @@ private:
   DisplayData lastData;
   unsigned long lastUpdateTime;
 
-  // Méthodes privées pour dessiner les éléments
-  void drawTopBar(const DisplayData& data);
-  void drawLeftPanel(const DisplayData& data);
-  void drawRightPanel(const DisplayData& data);
-  void drawProfileBar(const DisplayData& data);
-  void drawConnectionBar(const DisplayData& data);
-  void drawFooter(const DisplayData& data);
-  void drawBatteryIcon(uint8_t batteryLevel);
-  void drawStatusChip(const String& label, bool active, uint16_t x, uint16_t y, uint16_t colorActive, uint16_t colorInactive);
-  void drawStatusDot(bool connected, uint16_t x, uint16_t y);
-  void drawProgressBar(uint8_t current, uint8_t total, uint16_t x, uint16_t y, uint16_t width);
+  // Blocs de dessin (layout vertical bandeau 76x284)
+  void drawHeader();
+  void drawTempBlock();
+  void drawRelayChips();
+  void drawGravityBlock();
+  void drawProfileBlock();
+  void drawConnBlock();
+  void drawFooter();
 
-  // Constantes de couleurs
-  static const uint16_t COLOR_BACKGROUND;
-  static const uint16_t COLOR_TEXT;
-  static const uint16_t COLOR_ORANGE;
-  static const uint16_t COLOR_YELLOW;
-  static const uint16_t COLOR_BLUE;
-  static const uint16_t COLOR_RED;
-  static const uint16_t COLOR_GREEN;
-  static const uint16_t COLOR_GRAY;
-  static const uint16_t COLOR_ALERT;
+  // Helpers
+  void drawBatteryIcon(uint8_t percent);
+  void drawDot(bool connected, int y);
+  void drawProgressBar(uint8_t current, uint8_t total, int y);
 };
 
 #endif // DISPLAY_MANAGER_H

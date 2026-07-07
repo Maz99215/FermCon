@@ -1,74 +1,63 @@
-// src/WebServerManager.cpp
 #include "WebServerManager.h"
 #include <ArduinoJson.h>
-#include <LittleFS.h>
 
-// NOTE SECURITE: sur ce projet (reseau local), le champ config.password_hash
-// stocke le mot de passe utilise pour l'authentification HTTP Basic (jamais
-// renvoye par l'API). L'auth HTTP Basic transmet le mot de passe en clair,
-// il ne peut donc pas etre compare a un hash cote serveur simplement.
+// SECURITE : config.password_hash stocke le mot de passe en clair (HTTP Basic,
+// reseau local). Jamais renvoye par l'API.
 
-WebServerManager::WebServerManager(ConfigStore* cfg, ISpindelReceiver* isp, TemperatureController* temp, RelayController* relay, SystemStatus* status)
-    : server(80), configStore(cfg), ispindelReceiver(isp), temperatureController(temp), relayController(relay), systemStatus(status) {}
+WebServerManager::WebServerManager(ConfigStore* cfg, ISpindelReceiver* isp, TemperatureController* temp,
+                                   RelayController* relay, SystemStatus* status,
+                                   ProfileManager* profile, FermentationInfo* ferment)
+    : server(80), configStore(cfg), ispindelReceiver(isp), temperatureController(temp),
+      relayController(relay), systemStatus(status), profileManager(profile), fermentationInfo(ferment) {}
 
 void WebServerManager::begin() {
-    // Fichiers statiques de l'interface web
     server.serveStatic("/", LittleFS, "/web/").setDefaultFile("index.html");
 
-    // Reception des donnees iSpindel (pas d'auth : c'est l'iSpindel qui poste)
-    server.on("/ispindel", HTTP_POST,
-        [this](AsyncWebServerRequest* request) {},
-        NULL,
-        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            handleISpindel(request, data, len, index, total);
-        });
+    // iSpindel : pas d'auth (c'est l'iSpindel qui poste)
+    server.on("/ispindel", HTTP_POST, [](AsyncWebServerRequest* r) {}, NULL,
+        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t) { handleISpindel(r, d, l, i, t); });
 
-    // Statut systeme
-    server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
-        if (!authenticate(request)) return;
-        handleStatus(request);
-    });
+    server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* r) {
+        if (!authenticate(r)) return; handleStatus(r); });
 
-    // Configuration (lecture)
-    server.on("/api/config", HTTP_GET, [this](AsyncWebServerRequest* request) {
-        if (!authenticate(request)) return;
-        handleConfigGet(request);
-    });
+    server.on("/api/config", HTTP_GET, [this](AsyncWebServerRequest* r) {
+        if (!authenticate(r)) return; handleConfigGet(r); });
 
-    // Configuration (ecriture)
-    server.on("/api/config", HTTP_POST,
-        [this](AsyncWebServerRequest* request) {},
-        NULL,
-        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (!authenticate(request)) return;
-            handleConfigPost(request, data, len, index, total);
-        });
+    server.on("/api/config", HTTP_POST, [](AsyncWebServerRequest* r) {}, NULL,
+        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t) {
+            if (!authenticate(r)) return; handleConfigPost(r, d, l, i, t); });
 
-    // Reglage consigne
-    server.on("/api/setpoint", HTTP_POST,
-        [this](AsyncWebServerRequest* request) {},
-        NULL,
-        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (!authenticate(request)) return;
-            handleSetpoint(request, data, len, index, total);
-        });
+    server.on("/api/setpoint", HTTP_POST, [](AsyncWebServerRequest* r) {}, NULL,
+        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t) {
+            if (!authenticate(r)) return; handleSetpoint(r, d, l, i, t); });
 
-    // Controle manuel des relais
-    server.on("/api/manual", HTTP_POST,
-        [this](AsyncWebServerRequest* request) {},
-        NULL,
-        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (!authenticate(request)) return;
-            handleManualControl(request, data, len, index, total);
-        });
+    server.on("/api/manual", HTTP_POST, [](AsyncWebServerRequest* r) {}, NULL,
+        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t) {
+            if (!authenticate(r)) return; handleManualControl(r, d, l, i, t); });
 
-    // OTA (protege par les memes identifiants)
+    server.on("/api/profile", HTTP_GET, [this](AsyncWebServerRequest* r) {
+        if (!authenticate(r)) return; handleProfileGet(r); });
+
+    server.on("/api/profile", HTTP_POST, [](AsyncWebServerRequest* r) {}, NULL,
+        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t) {
+            if (!authenticate(r)) return; handleProfilePost(r, d, l, i, t); });
+
+    server.on("/api/profile/activate", HTTP_POST, [](AsyncWebServerRequest* r) {}, NULL,
+        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t) {
+            if (!authenticate(r)) return; handleProfileActivate(r, d, l, i, t); });
+
+    server.on("/api/fermentation", HTTP_GET, [this](AsyncWebServerRequest* r) {
+        if (!authenticate(r)) return; handleFermentationGet(r); });
+
+    server.on("/api/fermentation", HTTP_POST, [](AsyncWebServerRequest* r) {}, NULL,
+        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t) {
+            if (!authenticate(r)) return; handleFermentationPost(r, d, l, i, t); });
+
     SystemConfig& config = configStore->getConfig();
     ElegantOTA.begin(&server);
     if (strlen(config.password_hash) > 0) {
         ElegantOTA.setAuth(config.username, config.password_hash);
     }
-
     server.begin();
 }
 
@@ -77,9 +66,9 @@ void WebServerManager::loop() {
 }
 
 bool WebServerManager::authenticate(AsyncWebServerRequest* request) {
-    SystemConfig& config = configStore->getConfig();
-    const char* user = (strlen(config.username) > 0) ? config.username : "admin";
-    const char* pass = (strlen(config.password_hash) > 0) ? config.password_hash : "admin";
+    SystemConfig& c = configStore->getConfig();
+    const char* user = (strlen(c.username) > 0) ? c.username : "admin";
+    const char* pass = (strlen(c.password_hash) > 0) ? c.password_hash : "admin";
     if (!request->authenticate(user, pass)) {
         request->requestAuthentication();
         return false;
@@ -88,146 +77,202 @@ bool WebServerManager::authenticate(AsyncWebServerRequest* request) {
 }
 
 void WebServerManager::handleISpindel(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-    // Body suppose tenir en un seul chunk (payload iSpindel court)
-    if (index == 0) {
-        String body = String((char*)data, len);
-        if (ispindelReceiver->parsePayload(body)) {
-            request->send(200);
-        } else {
-            request->send(400);
-        }
+    static String body;
+    if (index == 0) body = "";
+    body += String((char*)data, len);
+    if (index + len == total) {
+        bool ok = ispindelReceiver->parsePayload(body);
+        body = "";
+        request->send(ok ? 200 : 400, "text/plain", ok ? "OK" : "ERR");
     }
 }
 
 void WebServerManager::handleStatus(AsyncWebServerRequest* request) {
-    AsyncResponseStream* response = request->beginResponseStream("application/json");
     JsonDocument doc;
-
-    doc["temperature"] = systemStatus->temperature;
-    doc["setpoint"] = systemStatus->setpoint;
-    doc["relay_fridge"] = systemStatus->relay_fridge;
-    doc["relay_heater"] = systemStatus->relay_heater;
-    doc["uptime"] = systemStatus->uptime;
-    doc["wifi_rssi"] = systemStatus->wifi_rssi;
-    doc["heap_free_kb"] = systemStatus->heap_free_kb;
+    doc["temperature"]    = systemStatus->temperature;
+    doc["setpoint"]       = systemStatus->setpoint;
+    doc["relay_fridge"]   = systemStatus->relay_fridge;
+    doc["relay_heater"]   = systemStatus->relay_heater;
+    doc["uptime"]         = systemStatus->uptime;
+    doc["wifi_rssi"]      = systemStatus->wifi_rssi;
+    doc["heap_free_kb"]   = systemStatus->heap_free_kb;
     doc["temp_sensor_ok"] = systemStatus->temp_sensor_ok;
-    doc["ip_address"] = systemStatus->ip_address;
+    doc["ip_address"]     = systemStatus->ip_address;
     doc["isp_temperature"] = systemStatus->isp_temperature;
-    doc["isp_gravity"] = systemStatus->isp_gravity;
-    doc["isp_battery"] = systemStatus->isp_battery;
-    doc["isp_angle"] = systemStatus->isp_angle;
+    doc["isp_gravity"]    = systemStatus->isp_gravity;
+    doc["isp_battery"]    = systemStatus->isp_battery;
+    doc["isp_angle"]      = systemStatus->isp_angle;
     doc["isp_last_update"] = systemStatus->isp_last_update;
-
-    serializeJson(doc, *response);
-    request->send(response);
+    String out; serializeJson(doc, out);
+    request->send(200, "application/json", out);
 }
 
 void WebServerManager::handleConfigGet(AsyncWebServerRequest* request) {
-    AsyncResponseStream* response = request->beginResponseStream("application/json");
     JsonDocument doc;
-    const SystemConfig& config = configStore->getConfig();
-
-    doc["wifi_ssid"] = config.wifi_ssid;
-    doc["setpoint"] = config.setpoint;
-    doc["hysteresis"] = config.hysteresis;
-    doc["min_compressor_delay"] = config.min_compressor_delay;
-    doc["temp_offset"] = config.temp_offset;
-    doc["username"] = config.username;
-    doc["mqtt_enabled"] = config.mqtt_enabled;
-    doc["mqtt_broker"] = config.mqtt_broker;
-    doc["mqtt_port"] = config.mqtt_port;
-    doc["mqtt_user"] = config.mqtt_user;
-    doc["mqtt_topic_prefix"] = config.mqtt_topic_prefix;
-    doc["gf_enabled"] = config.gf_enabled;
-    doc["gf_endpoint"] = config.gf_endpoint;
-    doc["gf_device_label"] = config.gf_device_label;
-    // Les mots de passe ne sont JAMAIS renvoyes.
-
-    serializeJson(doc, *response);
-    request->send(response);
+    const SystemConfig& c = configStore->getConfig();
+    doc["wifi_ssid"]            = c.wifi_ssid;
+    doc["setpoint"]            = c.setpoint;
+    doc["hysteresis"]          = c.hysteresis;
+    doc["min_compressor_delay"] = c.min_compressor_delay;
+    doc["temp_offset"]          = c.temp_offset;
+    doc["username"]            = c.username;
+    doc["mqtt_enabled"]         = c.mqtt_enabled;
+    doc["mqtt_broker"]          = c.mqtt_broker;
+    doc["mqtt_port"]            = c.mqtt_port;
+    doc["mqtt_user"]            = c.mqtt_user;
+    doc["mqtt_topic_prefix"]    = c.mqtt_topic_prefix;
+    doc["gf_enabled"]           = c.gf_enabled;
+    doc["gf_endpoint"]          = c.gf_endpoint;
+    doc["gf_device_label"]      = c.gf_device_label;
+    // mots de passe jamais renvoyes
+    String out; serializeJson(doc, out);
+    request->send(200, "application/json", out);
 }
 
 void WebServerManager::handleConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-    if (index == 0) {
-        JsonDocument doc;
-        DeserializationError error = deserializeJson(doc, data, len);
+    static String body;
+    if (index == 0) body = "";
+    body += String((char*)data, len);
+    if (index + len != total) return;
 
-        if (error) {
-            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
-            return;
-        }
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, body);
+    body = "";
+    if (error) { request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}"); return; }
 
-        SystemConfig& config = configStore->getConfig();
+    SystemConfig& c = configStore->getConfig();
+    if (!doc["wifi_ssid"].isNull())            strlcpy(c.wifi_ssid, doc["wifi_ssid"], sizeof(c.wifi_ssid));
+    if (!doc["wifi_password"].isNull())        strlcpy(c.wifi_password, doc["wifi_password"], sizeof(c.wifi_password));
+    if (!doc["setpoint"].isNull())             c.setpoint = doc["setpoint"];
+    if (!doc["hysteresis"].isNull())           c.hysteresis = doc["hysteresis"];
+    if (!doc["min_compressor_delay"].isNull()) c.min_compressor_delay = doc["min_compressor_delay"];
+    if (!doc["temp_offset"].isNull())          c.temp_offset = doc["temp_offset"];
+    if (!doc["username"].isNull())             strlcpy(c.username, doc["username"], sizeof(c.username));
+    if (!doc["password"].isNull())             strlcpy(c.password_hash, doc["password"], sizeof(c.password_hash));
+    if (!doc["mqtt_enabled"].isNull())         c.mqtt_enabled = doc["mqtt_enabled"];
+    if (!doc["mqtt_broker"].isNull())          strlcpy(c.mqtt_broker, doc["mqtt_broker"], sizeof(c.mqtt_broker));
+    if (!doc["mqtt_port"].isNull())            c.mqtt_port = doc["mqtt_port"];
+    if (!doc["mqtt_user"].isNull())            strlcpy(c.mqtt_user, doc["mqtt_user"], sizeof(c.mqtt_user));
+    if (!doc["mqtt_password"].isNull())        strlcpy(c.mqtt_password, doc["mqtt_password"], sizeof(c.mqtt_password));
+    if (!doc["mqtt_topic_prefix"].isNull())    strlcpy(c.mqtt_topic_prefix, doc["mqtt_topic_prefix"], sizeof(c.mqtt_topic_prefix));
+    if (!doc["gf_enabled"].isNull())           c.gf_enabled = doc["gf_enabled"];
+    if (!doc["gf_endpoint"].isNull())          strlcpy(c.gf_endpoint, doc["gf_endpoint"], sizeof(c.gf_endpoint));
+    if (!doc["gf_device_label"].isNull())      strlcpy(c.gf_device_label, doc["gf_device_label"], sizeof(c.gf_device_label));
 
-        if (!doc["wifi_ssid"].isNull())            strlcpy(config.wifi_ssid, doc["wifi_ssid"].as<const char*>(), sizeof(config.wifi_ssid));
-        if (!doc["wifi_password"].isNull())        strlcpy(config.wifi_password, doc["wifi_password"].as<const char*>(), sizeof(config.wifi_password));
-        if (!doc["setpoint"].isNull())             config.setpoint = doc["setpoint"];
-        if (!doc["hysteresis"].isNull())           config.hysteresis = doc["hysteresis"];
-        if (!doc["min_compressor_delay"].isNull()) config.min_compressor_delay = doc["min_compressor_delay"];
-        if (!doc["temp_offset"].isNull())          config.temp_offset = doc["temp_offset"];
-        if (!doc["username"].isNull())             strlcpy(config.username, doc["username"].as<const char*>(), sizeof(config.username));
-        if (!doc["password"].isNull())             strlcpy(config.password_hash, doc["password"].as<const char*>(), sizeof(config.password_hash));
-        if (!doc["mqtt_enabled"].isNull())         config.mqtt_enabled = doc["mqtt_enabled"];
-        if (!doc["mqtt_broker"].isNull())          strlcpy(config.mqtt_broker, doc["mqtt_broker"].as<const char*>(), sizeof(config.mqtt_broker));
-        if (!doc["mqtt_port"].isNull())            config.mqtt_port = doc["mqtt_port"];
-        if (!doc["mqtt_user"].isNull())            strlcpy(config.mqtt_user, doc["mqtt_user"].as<const char*>(), sizeof(config.mqtt_user));
-        if (!doc["mqtt_password"].isNull())        strlcpy(config.mqtt_password, doc["mqtt_password"].as<const char*>(), sizeof(config.mqtt_password));
-        if (!doc["mqtt_topic_prefix"].isNull())    strlcpy(config.mqtt_topic_prefix, doc["mqtt_topic_prefix"].as<const char*>(), sizeof(config.mqtt_topic_prefix));
-        if (!doc["gf_enabled"].isNull())           config.gf_enabled = doc["gf_enabled"];
-        if (!doc["gf_endpoint"].isNull())          strlcpy(config.gf_endpoint, doc["gf_endpoint"].as<const char*>(), sizeof(config.gf_endpoint));
-        if (!doc["gf_device_label"].isNull())      strlcpy(config.gf_device_label, doc["gf_device_label"].as<const char*>(), sizeof(config.gf_device_label));
-
-        if (configStore->saveConfig(config)) {
-            request->send(200, "application/json", "{\"status\":\"success\"}");
-        } else {
-            request->send(500, "application/json", "{\"error\":\"Failed to save config\"}");
-        }
-    }
+    if (configStore->saveConfig(c))
+        request->send(200, "application/json", "{\"status\":\"success\"}");
+    else
+        request->send(500, "application/json", "{\"error\":\"Failed to save config\"}");
 }
 
 void WebServerManager::handleSetpoint(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-    if (index == 0) {
-        JsonDocument doc;
-        DeserializationError error = deserializeJson(doc, data, len);
-
-        if (error || doc["value"].isNull()) {
-            request->send(400, "application/json", "{\"error\":\"Invalid JSON or missing value\"}");
-            return;
-        }
-
-        float value = doc["value"];
-        temperatureController->setSetpoint(value);
-
-        SystemConfig& config = configStore->getConfig();
-        config.setpoint = value;
-        configStore->saveConfig(config);
-
-        request->send(200, "application/json", "{\"status\":\"success\"}");
+    static String body;
+    if (index == 0) body = "";
+    body += String((char*)data, len);
+    if (index + len != total) return;
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, body);
+    body = "";
+    if (!error && !doc["setpoint"].isNull()) {
+        float sp = doc["setpoint"];
+        temperatureController->setSetpoint(sp);
+        JsonDocument r; r["status"] = "success"; r["setpoint"] = sp;
+        String out; serializeJson(r, out);
+        request->send(200, "application/json", out);
+    } else {
+        request->send(400, "text/plain", "Invalid request");
     }
 }
 
 void WebServerManager::handleManualControl(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-    if (index == 0) {
-        JsonDocument doc;
-        DeserializationError error = deserializeJson(doc, data, len);
-
-        if (error || doc["fridge"].isNull() || doc["heater"].isNull()) {
-            request->send(400, "application/json", "{\"error\":\"Invalid JSON or missing fridge/heater\"}");
-            return;
-        }
-
-        bool fridge = doc["fridge"];
-        bool heater = doc["heater"];
-
-        // Securite : jamais les deux en meme temps
-        if (fridge && heater) {
-            request->send(400, "application/json", "{\"error\":\"fridge and heater cannot both be ON\"}");
-            return;
-        }
-
-        relayController->setFridge(fridge);
-        relayController->setHeater(heater);
-
-        request->send(200, "application/json", "{\"status\":\"success\"}");
+    static String body;
+    if (index == 0) body = "";
+    body += String((char*)data, len);
+    if (index + len != total) return;
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, body);
+    body = "";
+    if (!error) {
+        bool cool = doc["cool"] | false;
+        bool heat = doc["heat"] | false;
+        relayController->setCool(cool);   // exclusivite geree dans RelayController
+        relayController->setHeat(heat);
+        JsonDocument r; r["status"] = "success"; r["cool"] = cool; r["heat"] = heat;
+        String out; serializeJson(r, out);
+        request->send(200, "application/json", out);
+    } else {
+        request->send(400, "text/plain", "Invalid request");
     }
+}
+
+void WebServerManager::handleProfileGet(AsyncWebServerRequest* request) {
+    JsonDocument doc;
+    JsonObject obj = doc.to<JsonObject>();
+    profileManager->toJson(obj);
+    obj["currentStep"] = profileManager->getCurrentStepInfo();
+    obj["setpoint"]    = profileManager->getCurrentSetpoint();
+    obj["active"]      = profileManager->isActive();
+    String out; serializeJson(doc, out);
+    request->send(200, "application/json", out);
+}
+
+void WebServerManager::handleProfilePost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    static String body;
+    if (index == 0) body = "";
+    body += String((char*)data, len);
+    if (index + len != total) return;
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, body);
+    body = "";
+    if (error) { request->send(400, "text/plain", "Invalid JSON"); return; }
+    profileManager->fromJson(doc.as<JsonObjectConst>());
+    configStore->saveProfile(*profileManager);
+    request->send(200, "text/plain", "Profile saved");
+}
+
+void WebServerManager::handleProfileActivate(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    static String body;
+    if (index == 0) body = "";
+    body += String((char*)data, len);
+    if (index + len != total) return;
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, body);
+    body = "";
+    if (error || doc["active"].isNull()) { request->send(400, "text/plain", "Invalid request"); return; }
+    bool active = doc["active"];
+    profileManager->setActive(active);
+    if (active) profileManager->start(); else profileManager->stop();
+    configStore->saveProfile(*profileManager);
+    request->send(200, "text/plain", "Profile activation updated");
+}
+
+void WebServerManager::handleFermentationGet(AsyncWebServerRequest* request) {
+    JsonDocument doc;
+    doc["stageName"]   = fermentationInfo->getStageName();
+    doc["fermentDays"] = fermentationInfo->getFermentDays();
+    String out; serializeJson(doc, out);
+    request->send(200, "application/json", out);
+}
+
+void WebServerManager::handleFermentationPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    static String body;
+    if (index == 0) body = "";
+    body += String((char*)data, len);
+    if (index + len != total) return;
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, body);
+    body = "";
+    if (error) { request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}"); return; }
+    if (!doc["stageName"].isNull()) fermentationInfo->setStageName(doc["stageName"].as<String>());
+    if (!doc["action"].isNull()) {
+        String action = doc["action"].as<String>();
+        if (action == "start") fermentationInfo->startBatch();
+        else if (action == "reset") fermentationInfo->resetBatch();
+    }
+    configStore->saveFermentation(*fermentationInfo);
+    JsonDocument resp;
+    resp["stageName"]   = fermentationInfo->getStageName();
+    resp["fermentDays"] = fermentationInfo->getFermentDays();
+    String out; serializeJson(resp, out);
+    request->send(200, "application/json", out);
 }
