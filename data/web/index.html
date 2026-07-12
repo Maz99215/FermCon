@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FermCon - Contrôleur de Fermentation</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>FermCon</h1>
+
+        <!-- ===== Fermentation (libellé d'étape + jours) ===== -->
+        <section class="fermentation-section">
+            <h2>Fermentation</h2>
+            <div>
+                <label for="stageName">Étape :</label>
+                <input type="text" id="stageName" name="stageName" placeholder="Primaire, Garde, Cold crash...">
+            </div>
+            <div>
+                <button id="saveButton">Enregistrer</button>
+                <button id="startButton">Démarrer le lot</button>
+                <button id="resetButton">Réinitialiser</button>
+            </div>
+            <div id="fermentDays">Jour 0</div>
+        </section>
+
+        <!-- ===== Profil de température ===== -->
+        <div class="profile-section">
+            <h2>Profil de Température</h2>
+            <table id="stepsTable">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Température Début (°C)</th>
+                        <th>Température Fin (°C)</th>
+                        <th>Durée (minutes)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Les étapes seront ajoutées ici dynamiquement -->
+                </tbody>
+            </table>
+            <button id="addStepBtn">Ajouter une étape</button>
+            <button id="saveProfileBtn">Enregistrer le profil</button>
+            <button id="activateProfileBtn">Activer le profil</button>
+        </div>
+
+        <!-- ===== Statut ===== -->
+        <div class="status-section">
+            <h2>Statut Actuel</h2>
+            <p>Étape courante: <span id="currentStep"></span></p>
+            <p>Consigne actuelle: <span id="currentSetpoint"></span> °C</p>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
