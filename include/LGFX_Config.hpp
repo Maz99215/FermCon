@@ -62,7 +62,7 @@ public:
       cfg.dummy_read_pixel = 8;
       cfg.dummy_read_bits  = 1;
       cfg.readable         = false;
-      cfg.invert           = true;   // false si couleurs inversees
+      cfg.invert           = false;   // false si couleurs inversees
       cfg.rgb_order        = false;  // true si rouge/bleu echanges
       cfg.dlen_16bit       = false;
       cfg.bus_shared       = false;

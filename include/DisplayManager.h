@@ -2,7 +2,7 @@
 #define DISPLAY_MANAGER_H
 
 #include <Arduino.h>
-#include "LGFX_Config.hpp"   // fournit LGFX + les macros couleur TFT_* (compat TFT_eSPI)
+#include "LGFX_Config.hpp"
 #include "Config.h"
 
 struct DisplayData {
@@ -24,6 +24,8 @@ struct DisplayData {
   uint8_t profileStepCount;
   String ip;
   bool  fault;
+  int   wifiRssi;       // dBm
+  int   iSpindelRssi;   // dBm
 };
 
 class DisplayManager {
@@ -39,19 +41,10 @@ private:
   DisplayData lastData;
   unsigned long lastUpdateTime;
 
-  // Blocs de dessin (layout vertical bandeau 76x284)
-  void drawHeader();
-  void drawTempBlock();
-  void drawRelayChips();
-  void drawGravityBlock();
-  void drawProfileBlock();
-  void drawConnBlock();
-  void drawFooter();
-
-  // Helpers
-  void drawBatteryIcon(uint8_t percent);
-  void drawDot(bool connected, int y);
-  void drawProgressBar(uint8_t current, uint8_t total, int y);
+  // Helpers de dessin (layout paysage 284x76)
+  void drawOutputBar();                                                     // barre SORTIE (gauche)
+  void drawVerticalBar(int x, float fraction, uint16_t color, const String& label); // barres etat (droite)
+  static float clampf(float value, float lo, float hi);
 };
 
 #endif // DISPLAY_MANAGER_H

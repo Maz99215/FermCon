@@ -29,12 +29,23 @@ unsigned long lastWiFiReconnect = 0;
 
 void setup() {
   Serial.begin(115200);
-  LittleFS.begin(true);
+  unsigned long t0 = millis();
+  while (!Serial && millis() - t0 < 3000) delay(10);
+  Serial.println("\n[BOOT] setup entry");
+
+  if (!LittleFS.begin(false)) {
+    Serial.println("[BOOT] LittleFS MOUNT FAILED - lancer 'pio run -e esp32-c6 -t uploadfs'");
+  } else {
+    Serial.println("[BOOT] LittleFS OK");
+  }
 
   configStore.load();
+  Serial.println("[BOOT] config loaded");
+
   relays.begin();
   tempCtrl.begin(&relays);
   display.begin();
+  Serial.println("[BOOT] managers OK");
   fermentation.begin();
   configStore.loadProfile(profile);
   configStore.loadFermentation(fermentation);
@@ -143,7 +154,9 @@ void loop() {
       0,
       0,
       WiFi.localIP().toString(),
-      tempCtrl.isFault()
+      tempCtrl.isFault(),
+      WiFi.RSSI(),
+      ispindel.getRSSI()
     };
     display.update(d);
     lastDisp = millis();

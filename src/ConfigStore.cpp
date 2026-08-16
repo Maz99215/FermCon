@@ -1,9 +1,6 @@
 #include "ConfigStore.h"
 
 ConfigStore::ConfigStore() {
-    if (!LittleFS.begin()) {
-        Serial.println("Erreur initialisation LittleFS");
-    }
 }
 
 SystemConfig& ConfigStore::getConfig() {

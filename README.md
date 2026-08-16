@@ -14,16 +14,6 @@ protégée avec **OTA**, et affiche l'état sur un écran **ST7789**.
 
 - [Fonctionnalités](#fonctionnalités)
 - [Matériel](#matériel)
-  - [Architecture](#architecture)
-  - [Attribution des actionneurs](#attribution-des-actionneurs-définitive)
-  - [Brochage ESP32-C6](#brochage-esp32-c6)
-  - [Câblage détaillé](#câblage-détaillé)
-    - [Côté commande — module relais](#côté-commande--module-relais-basse-tension)
-    - [Côté puissance (230 V)](#côté-puissance-230-v-déporté)
-    - [Sonde & écran](#sonde--écran)
-  - [BOM](#bom)
-  - [Sécurité — points clés](#sécurité--points-clés)
-  - [Comportement fonctionnel](#comportement-fonctionnel)
 - [Architecture logicielle](#architecture-logicielle)
 - [Modules](#modules)
 - [Prise en main (build & flash)](#prise-en-main-build--flash)
@@ -57,157 +47,15 @@ protégée avec **OTA**, et affiche l'état sur un écran **ST7789**.
 
 ## Matériel
 
-> Version matérielle : **v1.1** — *SSR supprimé, deux voies sur module relais mécanique.*
-> Dernière révision : 2026-07-09
+> ℹ️ **Section rédigée séparément (agent matériel).** Le firmware attend le brochage
+> défini dans `include/Config.h` ; le détail du câblage vit dans `WIRING.md`.
+> Le contenu entre les marqueurs ci-dessous est géré hors du périmètre « code ».
 
-FermCon maintient une cuve de fermentation à consigne en pilotant **un frigo** (froid) et **une plaque chauffante 25 W** (chaud), d'après la température lue par une sonde **DS18B20**. Il expose un **serveur web** (WiFi), ingère les données d'un **iSpindel** (densité + température) et affiche l'état sur un **écran TFT**.
-
-La **régulation est prioritaire et autonome** : elle fonctionne même hors ligne. Le Wi-Fi ne sert qu'à la télémétrie (iSpindel, MQTT, Grainfather), à l'interface web et à l'OTA.
-
-> Le brochage complet est également disponible dans `WIRING.md`. Toute modification de brochage doit être répercutée dans `include/Config.h`.
-
-### Architecture
-
-- **Contrôleur** : ESP32-C6-DevKitC-1 (WiFi, logique, serveur web, régulation).
-- **Mesure** : sonde DS18B20 étanche (1-Wire) sur la cuve.
-- **Affichage** : écran TFT ST7789 2.25" (SPI).
-- **Actionneurs** : module 2 relais mécaniques opto-isolés — **1 canal froid (IN2) + 1 canal chaud (IN1)**.
-- **Puissance déportée** : tout le 230 V est câblé hors carte (borniers, fusibles, snubbers).
-- **Alimentation** : module AC-DC 5 V / 2 A → rail 5 V + logique 3,3 V du DevKit.
-
-```mermaid
-flowchart LR
-    PWR["Alim AC-DC 5V/2A"] --> ESP["ESP32-C6-DevKitC-1"]
-    DS["DS18B20 (cuve)"] -->|1-Wire GPIO4| ESP
-    ESP -->|SPI| TFT["Écran ST7789 2.25''"]
-    ESP -->|GPIO2 actif LOW → IN2| RLY["Module 2 relais"]
-    ESP -->|GPIO3 actif LOW → IN1| RLY
-    RLY -->|COM/NO + snubber| FRIGO["Frigo 230V (FROID)"]
-    RLY -->|COM/NO + snubber| PLAQUE["Plaque 25W 230V (CHAUD)"]
-    ISP["iSpindel"] -.WiFi/HTTP.-> ESP
-    ESP -.WiFi.-> HA["Web / MQTT / Home Assistant"]
-```
-
-### Attribution des actionneurs (DÉFINITIVE)
-
-| Charge | Actionneur | Commande | Niveau actif | Protections |
-|---|---|---|---|---|
-| **FROID — frigo** | Relais mécanique **canal 2 (IN2)** | GPIO2 | **Actif LOW** | Snubber RC (contact) + fusible T6,3 A 🔶 + câble ≥ 1,5 mm² |
-| **CHAUD — plaque 25 W** | Relais mécanique **canal 1 (IN1)** | GPIO3 | **Actif LOW** | Snubber RC (contact) + fusible T3,15 A + câble ≥ 0,75 mm² |
-
-> ❌ **SSR-40DA supprimé** du projet (conservé pour un autre usage). Les deux voies sont désormais des relais mécaniques → **mode de défaut « ouvert »** (contrôleur planté = frigo ET plaque coupés = état sûr).
-
-### Brochage ESP32-C6
-
-⚠️ Éviter GPIO8/9/15 (strapping) et GPIO12/13 (USB natif).
-
-| Fonction | GPIO | Interface | Remarque |
-|---|---|---|---|
-| DS18B20 (données) | GPIO4 | 1-Wire | Pull-up 4,7 kΩ vers 3V3 **obligatoire** |
-| Sortie FROID | GPIO2 | GPIO → IN2 | Actif LOW + **pull-up 10 kΩ vers 3V3** (état OFF au boot) |
-| Sortie CHAUD | GPIO3 | GPIO → IN1 | Actif LOW + **pull-up 10 kΩ vers 3V3** (état OFF au boot) |
-| Écran SCLK | GPIO6 | SPI | — |
-| Écran MOSI | GPIO7 | SPI | — |
-| Écran CS | GPIO10 | SPI | — |
-| Écran DC | GPIO11 | SPI | — |
-| Écran RST | GPIO21 | GPIO | — |
-| Écran BL | GPIO22 | PWM | Rétroéclairage |
-
-### Câblage détaillé
-
-#### Côté commande — module relais (basse tension)
-
-**Retirer le cavalier VCC–JD_VCC** pour une isolation galvanique réelle.
-
-Le module 2 canaux possède un bloc 3 broches côté alim sérigraphié `GND · VCC · JD_VCC`, avec un shunt reliant VCC ↔ JD_VCC.
-
-```
-   [ GND ]  [ VCC ]  [ JD_VCC ]
-              └──shunt──┘   ← à retirer
-```
-
-- **Retirer** le capuchon plastique et le conserver.
-- **Vérifier** au multimètre (continuité) : entre `VCC` et `JD_VCC`, **plus de bip** = cavalier bien absent.
-- Puis câbler : `VCC` = 3,3 V (opto/logique), `JD_VCC` = 5 V (bobine), `GND` commun.
-
-Sans cette séparation, un GPIO à 3,3 V laisse ~1,7 V sur l'entrée du module et le relais risque de ne pas retomber proprement.
-
-| De | Vers | Rôle |
-|---|---|---|
-| ESP32-C6 3V3 | VCC (opto) | Référence logique 3,3 V |
-| Alim 5 V | JD_VCC | Alimente les bobines (>100 mA) |
-| GND | GND | Masse commune |
-| GPIO3 | IN1 | Commande CHAUD (actif LOW) |
-| GPIO2 | IN2 | Commande FROID (actif LOW) |
-| 10 kΩ | IN1→3V3 et IN2→3V3 | **Pull-ups : relais OFF au boot** |
-
-#### Côté puissance (230 V, déporté)
-
-```
-Phase ──[fusible T]──► COM ──(contact)──► NO ──► Phase charge (frigo / plaque)
-Neutre ─────────────────────────────────────────► Neutre charge (direct)
-Terre (PE) ──────────────────────────────────────► Terre charge (direct)
-
-Snubber RC ⇒ aux bornes du contact (COM–NO) de CHAQUE canal
-```
-
-- On commute **uniquement la phase**, jamais le neutre ni la terre.
-- **COM + NO** → charge éteinte au repos (sûr).
-- **Snubber RC** aux bornes de chaque contact — le canal frigo (inductif) est le plus critique.
-- Snubber prévu pour le secteur (condensateur X2, RC ≥ 250 V AC), sans polarité.
-
-#### Sonde & écran
-
-| De | Vers | Remarque |
-|---|---|---|
-| DS18B20 VDD | 3V3 | Mode 3 fils (pas de parasite power) |
-| DS18B20 DQ | GPIO4 | + pull-up 4,7 kΩ vers 3V3 |
-| DS18B20 GND | GND | — |
-| Écran VCC/GND | 3V3 / GND | + 100 nF de découplage |
-| Écran SCLK/MOSI/CS/DC/RST/BL | GPIO6/7/10/11/21/22 | SPI |
-
-### BOM
-
-| # | Composant | Qté | Rôle | Tension | Statut |
-|---|---|---|---|---|---|
-| 1 | ESP32-C6-DevKitC-1 | 1 | Contrôleur | 5 V / 3,3 V | ✅ |
-| 2 | DS18B20 étanche | 1 | Sonde T° cuve | 3,3 V | ✅ |
-| 3 | Résistance 4,7 kΩ | 1 | Pull-up 1-Wire | — | ✅ |
-| 4 | Résistance 10 kΩ | 2 | Pull-up IN1/IN2 (état OFF boot) | — | ➕ Ajouté |
-| 5 | Écran TFT ST7789 2.25" | 1 | Affichage | 3,3 V | ✅ |
-| 6 | Module 2 relais opto-isolé | 1 | FROID (IN2) + CHAUD (IN1) | 5 V bobine / 3,3 V cmd | ✅ |
-| 7 | Snubber RC | 2 | Protection contacts (froid + chaud) | 230 V | ✅ |
-| 8 | Alim AC-DC 5 V / 2 A | 1 | Alimentation | 220 V → 5 V | ✅ |
-| 9 | Condensateur 470–1000 µF / 16 V | 1 | Réservoir 5 V | 5 V | ✅ |
-| 10 | Condensateur 100 nF | 1–2 | Découplage HF | — | ✅ |
-| 11 | Fusible T6,3 A + porte-fusible | 1 | Protection froid | 230 V | 🔶 |
-| 12 | Fusible T3,15 A + porte-fusible | 1 | Protection chaud | 230 V | 🔶 |
-| 13 | Borniers à vis, câblage, PE, boîtier | — | Connectique / mécanique | — | 🔶 |
-| 14 | iSpindel (externe) | 1 | Suivi densité | — | ✅ |
-| — | ~~SSR-40DA~~ | ~~1~~ | ~~Froid~~ | — | ❌ Retiré |
-
-### Sécurité — points clés
-
-- 🟢 **Deux voies en défaut « ouvert »** : panne/coupure = charges coupées.
-- 🟢 **Aucun 230 V sur la logique** — puissance déportée en zone dédiée.
-- **Cavalier JD_VCC retiré** → isolation galvanique effective.
-- **Pull-ups 10 kΩ** garantissant l'état OFF des relais au démarrage.
-- **Snubbers RC** aux bornes de chaque contact (frigo inductif = prioritaire).
-- **Fusibles temporisés** calibrés par branche (protègent le matériel + risque incendie ; les personnes sont protégées par le différentiel du tableau).
-- **Terre (PE)** raccordée à toute masse métallique.
-- **Anti-court-cycle compresseur** (logiciel) : OFF min 300 s, marche min froid 120 s.
-- **Repli sûr** : sonde DS18B20 en erreur (−127 / 85 °C) → les deux sorties coupées (FAULT).
-- 🔶 Niveaux logiques : tout est 3,3 V côté ESP32 → aucun conflit 5 V/3,3 V.
-
-### Comportement fonctionnel
-
-- Régulation double-consigne froid/chaud avec **hystérésis**, **exclusivité** et **anti-court-cycle** (≥ 5 min recommandé sur le frigo).
-- **Les deux sorties sont actif LOW** (GPIO HAUT = relais OFF).
-- **Repli sûr** : défaut sonde → couper les deux sorties.
-- **Régulation autonome** hors WiFi/MQTT ; reconnexion transparente.
-- **Persistance** config + profil.
-- **Ingestion iSpindel** (densité + température) sans bloquer la régulation.
-- Serveur web + intégration MQTT/Home Assistant.
+<!-- HARDWARE:BEGIN -->
+_(Section matériel à compléter : nomenclature, brochage, câblage, alimentation,
+photos/schémas. Le firmware s'appuie sur les broches et polarités déclarées dans
+`include/Config.h` — toute modification de brochage doit y être répercutée.)_
+<!-- HARDWARE:END -->
 
 ---
 
@@ -230,7 +78,7 @@ responsabilité est isolée dans un module, instancié une fois puis piloté par
                           (jours, étape,      (MQTT ou           (UI + API + OTA,
                            densité départ)     Grainfather)       auth simple)
                                  │                                     │
-   DS18B20 ──► TemperatureController ──► RelayController ──► FROID / CHAUD (relais)
+   DS18B20 ──► TemperatureController ──► RelayController ──► FROID / CHAUD (SSR/relais)
                      ▲   (hystérésis, anti-court-cycle,
                      │    FAULT, timeout)
               ProfileManager (consigne = f(temps) via paliers + rampes)
@@ -397,4 +245,3 @@ FermCon/
 | UI web absente après flash | Oublier `uploadfs` : refaire `pio run -e esp32-c6 -t buildfs && ... -t uploadfs`. |
 | Le froid ne redémarre pas | Normal si < 5 min depuis la dernière extinction (anti-court-cycle). |
 | Écran décentré / rogné | Ajuster les offsets `82 / 18` dans `include/LGFX_Config.hpp`. |
-| Relais ne retombe pas (FROID ou CHAUD) | Vérifier que le cavalier JD_VCC est bien retiré du module relais. |

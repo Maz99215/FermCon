@@ -1,14 +1,28 @@
 #include "DisplayManager.h"
 
-// NB : les couleurs TFT_BLACK / TFT_WHITE / TFT_RED / ... proviennent des macros
-// de compatibilite fournies par LovyanGFX (via LGFX_Config.hpp).
+// Palette (RGB -> lgfx::color565). Les macros TFT_* restent disponibles.
+constexpr uint16_t FROID     = lgfx::color565(14, 165, 233);
+constexpr uint16_t CHAUD     = lgfx::color565(249, 115, 22);
+constexpr uint16_t REPOS_BG  = lgfx::color565(17, 24, 39);
+constexpr uint16_t REPOS_FG  = lgfx::color565(100, 116, 139);
+constexpr uint16_t REPOS_BRD = lgfx::color565(51, 65, 85);
+constexpr uint16_t SG_VIOLET = lgfx::color565(167, 139, 250);
+constexpr uint16_t SKY       = lgfx::color565(56, 189, 248);   // IP + accent header
+constexpr uint16_t VERT      = lgfx::color565(34, 197, 94);
+constexpr uint16_t ORANGE    = lgfx::color565(245, 158, 11);
+constexpr uint16_t ROUGE     = lgfx::color565(239, 68, 68);
+constexpr uint16_t MUTED     = lgfx::color565(148, 163, 184);
+constexpr uint16_t TRACK     = lgfx::color565(31, 41, 55);
 
 DisplayManager::DisplayManager() : lastUpdateTime(0) {}
 
 void DisplayManager::begin() {
-  tft.init();
-  tft.setRotation(0);              // portrait bandeau : width()=76, height()=284
+  bool ok = tft.init();
+  Serial.printf("[DISP] init=%d  w=%d h=%d\n", (int)ok, tft.width(), tft.height());
+
+  tft.setRotation(3);              // paysage inverse : width()=284, height()=76
   tft.fillScreen(TFT_BLACK);
+
   ledcAttach(PIN_TFT_BL, TFT_BL_PWM_FREQ, TFT_BL_PWM_RES);
   setBacklight(70);
 }
@@ -21,157 +35,139 @@ void DisplayManager::update(const DisplayData& data) {
   unsigned long now = millis();
   if (now - lastUpdateTime < 500) return;   // throttle 500 ms
   lastUpdateTime = now;
-  // Redraw complet a chaque cycle throttle : sur ~76x284 c'est rapide et evite
-  // tout memcmp non defini sur une struct contenant des String.
+  // Redraw complet a chaque cycle : evite tout memcmp sur une struct a String.
   lastData = data;
   forceRedraw();
 }
 
 void DisplayManager::forceRedraw() {
+  // --- Ecran de panne sonde ---
   if (lastData.fault) {
     tft.fillScreen(TFT_RED);
     tft.setTextColor(TFT_WHITE);
+    tft.setTextDatum(MC_DATUM);
     tft.setTextSize(2);
-    tft.setTextDatum(TC_DATUM);
-    tft.drawString("PANNE", tft.width() / 2, 110);
-    tft.drawString("SONDE", tft.width() / 2, 140);
+    tft.drawString("PANNE SONDE", 142, 28);
     tft.setTextSize(3);
-    tft.drawString("--.-", tft.width() / 2, 180);
+    tft.drawString("--.-", 142, 54);
     return;
   }
 
+  // Fond
   tft.fillScreen(TFT_BLACK);
-  drawHeader();
-  drawTempBlock();
-  drawRelayChips();
-  drawGravityBlock();
-  drawProfileBlock();
-  drawConnBlock();
-  drawFooter();
-}
 
-void DisplayManager::drawHeader() {
-  // Jours de fermentation
-  tft.setTextColor(TFT_ORANGE);
+  // 1) Barre SORTIE (gauche)
+  drawOutputBar();
+
+  // 2) Bloc central : separateur vertical
+  tft.drawFastVLine(124, 6, 58, TRACK);
+
+  // 2a) Colonne temperature
+  // Header : Jxx (cyan) + nom d'etape (muted)
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextSize(1);
+  tft.setTextColor(SKY);
+  String jstr = "J" + String(lastData.fermentDays);
+  tft.drawString(jstr, 22, 2);
+  tft.setTextColor(MUTED);
+  tft.drawString(lastData.stageName.substring(0, 10), 22 + tft.textWidth(jstr) + 3, 2);
+
+  // Temperature (dominante) + unite C, centre sur x=72
+  tft.setTextSize(3);
+  String tstr = String(lastData.currentTemp, 1);
+  int tW = tft.textWidth(tstr);
   tft.setTextSize(2);
-  tft.setTextDatum(TL_DATUM);
-  tft.drawString("J" + String(lastData.fermentDays), 2, 2);
-
-  // Batterie iSpindel (haut droite)
-  drawBatteryIcon(lastData.battery);
-
-  // Nom d'etape (libelle libre, tronque)
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(1);
-  tft.setTextDatum(TL_DATUM);
-  tft.drawString(lastData.stageName.substring(0, 12), 2, 22);
-
-  tft.drawFastHLine(0, 34, tft.width(), TFT_DARKGREY);
-}
-
-void DisplayManager::drawTempBlock() {
-  tft.setTextColor(TFT_DARKGREY);
-  tft.setTextSize(1);
-  tft.setTextDatum(TC_DATUM);
-  tft.drawString("TEMP", tft.width() / 2, 40);
-
+  int uW = tft.textWidth("C");
+  int startX = 72 - (tW + 2 + uW) / 2;
+  tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_WHITE);
   tft.setTextSize(3);
-  tft.setTextDatum(TC_DATUM);
-  tft.drawFloat(lastData.currentTemp, 1, tft.width() / 2, 52);
+  tft.drawString(tstr, startX, 36);
+  tft.setTextSize(2);
+  tft.drawString("C", startX + tW + 2, 36);
 
-  tft.setTextColor(TFT_YELLOW);
-  tft.setTextSize(1);
-  tft.setTextDatum(TC_DATUM);
-  tft.drawString("-> " + String(lastData.setpoint, 1) + "C", tft.width() / 2, 82);
-}
-
-void DisplayManager::drawRelayChips() {
-  // Deux chips empiles horizontalement, largeur 34 chacun (2+34+2+34+2 <= 76)
-  tft.fillRoundRect(3, 98, 34, 18, 4, lastData.coolOn ? TFT_BLUE : TFT_DARKGREY);
-  tft.setTextColor(TFT_WHITE);
+  // Consigne
   tft.setTextSize(1);
   tft.setTextDatum(MC_DATUM);
-  tft.drawString("FROID", 20, 107);
+  tft.setTextColor(MUTED);
+  tft.drawString("consigne " + String(lastData.setpoint, 1) + "C", 72, 60);
 
-  tft.fillRoundRect(39, 98, 34, 18, 4, lastData.heatOn ? TFT_RED : TFT_DARKGREY);
-  tft.drawString("CHAUD", 56, 107);
-}
+  // 2b) Colonne densite (centree en hauteur), centre sur x=176
+  tft.setTextSize(3);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(SG_VIOLET);
+  tft.drawFloat(lastData.gravity, 3, 176, 28);
 
-void DisplayManager::drawGravityBlock() {
-  tft.drawFastHLine(0, 124, tft.width(), TFT_DARKGREY);
-  tft.setTextColor(TFT_DARKGREY);
   tft.setTextSize(1);
-  tft.setTextDatum(TL_DATUM);
-  tft.drawString("SG", 2, 130);
-
-  tft.setTextColor(TFT_GREEN);
-  tft.setTextSize(2);
-  tft.drawFloat(lastData.gravity, 3, 2, 143);
-
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(1);
-  tft.drawString("dep " + String(lastData.gravityStart, 3), 2, 165);
-
+  tft.setTextColor(MUTED);
   if (lastData.gravityStart > 1.0f) {
-    float att = (lastData.gravityStart - lastData.gravity) / (lastData.gravityStart - 1.0f) * 100.0f;
-    tft.drawString("att " + String(att, 1) + "%", 2, 177);
+    int att = (int)round((lastData.gravityStart - lastData.gravity) /
+                         (lastData.gravityStart - 1.0f) * 100.0f);
+    tft.drawString("OG " + String(lastData.gravityStart, 3), 176, 46);
+    tft.drawString(String(att) + "%  " + String(lastData.angle, 0) + "deg", 176, 57);
   } else {
-    tft.drawString("att --", 2, 177);
+    tft.drawString("OG --", 176, 46);
+    tft.drawString(String(lastData.angle, 0) + "deg", 176, 57);
   }
-  tft.drawString("ang " + String(lastData.angle, 1), 2, 189);
+
+  // 2c) IP en pied (bas droite du bloc central)
+  tft.setTextSize(1);
+  tft.setTextDatum(BR_DATUM);
+  tft.setTextColor(SKY);
+  tft.drawString(lastData.ip, 224, 73);
+
+  // 3) Barres d'etat (droite)
+  tft.drawFastVLine(228, 0, 76, TRACK);
+
+  // Batterie
+  uint16_t batCol = (lastData.battery > 50) ? VERT : (lastData.battery >= 20) ? ORANGE : ROUGE;
+  drawVerticalBar(232, lastData.battery / 100.0f, batCol, String(lastData.battery));
+
+  // Signal iSpindel
+  float ispForce = clampf((lastData.iSpindelRssi + 100) / 50.0f, 0.0f, 1.0f);
+  uint16_t ispCol = lastData.iSpindelOnline
+                      ? ((ispForce >= 0.6f) ? VERT : (ispForce >= 0.3f) ? ORANGE : ROUGE)
+                      : ROUGE;
+  drawVerticalBar(249, lastData.iSpindelOnline ? ispForce : 0.1f, ispCol, "iS");
+
+  // Signal WiFi
+  float wifiForce = clampf((lastData.wifiRssi + 100) / 50.0f, 0.0f, 1.0f);
+  uint16_t wifiCol = (wifiForce >= 0.6f) ? VERT : (wifiForce >= 0.3f) ? ORANGE : ROUGE;
+  drawVerticalBar(266, wifiForce, wifiCol, "Wi");
 }
 
-void DisplayManager::drawProfileBlock() {
-  tft.drawFastHLine(0, 203, tft.width(), TFT_DARKGREY);
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(1);
-  tft.setTextDatum(TL_DATUM);
-  tft.drawString(lastData.profileStepLabel.substring(0, 12), 2, 208);
+// Barre SORTIE verticale (REPOS / FROID / CHAUD), texte empile
+void DisplayManager::drawOutputBar() {
+  uint16_t bg = REPOS_BG, txt = REPOS_FG, brd = REPOS_BRD;
+  String label = "REPOS";
+  if (lastData.coolOn)      { bg = FROID; brd = FROID; txt = TFT_BLACK; label = "FROID"; }
+  else if (lastData.heatOn) { bg = CHAUD; brd = CHAUD; txt = TFT_BLACK; label = "CHAUD"; }
 
-  if (lastData.profileStepCount > 0) {
-    drawProgressBar(lastData.profileStepIndex, lastData.profileStepCount, 222);
-  } else {
-    tft.drawString("Consigne fixe", 2, 222);
+  tft.fillRoundRect(3, 6, 14, 64, 2, bg);
+  tft.drawRect(3, 6, 14, 64, brd);
+
+  tft.setTextSize(1);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(txt);
+  int n = label.length();
+  for (int i = 0; i < n; i++) {
+    tft.drawString(String(label[i]), 10, 12 + i * 12);
   }
 }
 
-void DisplayManager::drawConnBlock() {
-  tft.drawFastHLine(0, 236, tft.width(), TFT_DARKGREY);
-  drawDot(lastData.iSpindelOnline, 244);
-  tft.setTextColor(TFT_WHITE);
+// Barre d'etat verticale pleine hauteur + label dessous
+void DisplayManager::drawVerticalBar(int x, float fraction, uint16_t color, const String& label) {
+  tft.drawRect(x, 6, 14, 56, TRACK);
+  int h = (int)(clampf(fraction, 0.0f, 1.0f) * 54.0f);
+  if (h > 0) tft.fillRect(x + 1, 6 + (54 - h) + 1, 12, h, color);
   tft.setTextSize(1);
-  tft.setTextDatum(TL_DATUM);
-  tft.drawString("iSp " + String(lastData.iSpindelLastSeenMin) + "min", 12, 241);
-
-  drawDot(lastData.mqttConnected, 258);
-  tft.drawString(lastData.mqttConnected ? "MQTT ok" : "MQTT --", 12, 255);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(MUTED);
+  tft.drawString(label, x + 7, 68);
 }
 
-void DisplayManager::drawFooter() {
-  tft.setTextColor(TFT_DARKGREY);
-  tft.setTextSize(1);
-  tft.setTextDatum(BC_DATUM);
-  tft.drawString(lastData.ip, tft.width() / 2, tft.height() - 2);
-}
-
-void DisplayManager::drawBatteryIcon(uint8_t percent) {
-  uint16_t color = (percent > 50) ? TFT_GREEN : (percent > 20) ? TFT_YELLOW : TFT_RED;
-  int x = 48, y = 2;
-  tft.drawRect(x, y, 20, 10, TFT_WHITE);
-  tft.fillRect(x + 20, y + 3, 2, 4, TFT_WHITE);
-  tft.fillRect(x + 1, y + 1, map(percent, 0, 100, 0, 18), 8, color);
-}
-
-void DisplayManager::drawDot(bool connected, int y) {
-  tft.fillCircle(6, y + 3, 3, connected ? TFT_GREEN : TFT_RED);
-}
-
-void DisplayManager::drawProgressBar(uint8_t current, uint8_t total, int y) {
-  int w = 72, x = 2, h = 6;
-  tft.drawRect(x, y, w, h, TFT_WHITE);
-  if (total > 0) {
-    int pw = map(current, 0, total, 0, w - 2);
-    tft.fillRect(x + 1, y + 1, pw, h - 2, TFT_GREEN);
-  }
+float DisplayManager::clampf(float value, float lo, float hi) {
+  if (value < lo) return lo;
+  if (value > hi) return hi;
+  return value;
 }
