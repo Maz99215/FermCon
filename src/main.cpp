@@ -10,6 +10,7 @@
 #include "FermentationInfo.h"
 #include "DisplayManager.h"
 #include "WebServerManager.h"
+#include <time.h>
 
 // Instances globales
 ConfigStore configStore;
@@ -27,6 +28,45 @@ float gravityStart = 0.0f;
 unsigned long lastMqttPublish = 0;
 
 // ---------------------------------------------------------------------------
+// NTP
+// ---------------------------------------------------------------------------
+bool timeIsValid() {
+  return time(nullptr) > (time_t)NTP_VALID_EPOCH_MIN;
+}
+
+void ntpTask() {
+  static unsigned long lastCheck = 0;
+  static bool wasSynced = false;
+  static bool wasConn = false;
+
+  bool connected = (WiFi.status() == WL_CONNECTED);
+
+  if (!connected) {
+    wasSynced = false;
+    wasConn = false;
+    return;
+  }
+  if (!wasConn) {
+    wasSynced = false;
+    wasConn = true;
+  }
+  if (wasSynced) return;
+  if (millis() - lastCheck < NTP_LOG_INTERVAL_MS) return;
+  lastCheck = millis();
+
+  if (timeIsValid()) {
+    wasSynced = true;
+    time_t now = time(nullptr);
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    Serial.print("[NTP] heure synchronisee: ");
+    Serial.println(buf);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // wifiTask - machine a etats non bloquante pour la reconnexion STA
 // ---------------------------------------------------------------------------
 void wifiTask() {
@@ -41,6 +81,8 @@ void wifiTask() {
       Serial.print("[WIFI] STA connecte - IP: ");
       Serial.println(WiFi.localIP());
       wasConnected = true;
+      configTzTime(NTP_TZ, NTP_SERVER_1, NTP_SERVER_2);
+      Serial.println("[NTP] configTzTime lance");
     }
   } else {
     if (wasConnected) {
@@ -163,6 +205,7 @@ void loop() {
 
   webServer.loop();
   wifiTask();
+  ntpTask();
 
   // Etat systeme
   systemStatus.temperature   = tempCtrl.getCurrentTemp();

@@ -43,4 +43,13 @@
 #define WIFI_STA_CONNECT_TIMEOUT_MS 15000
 #define WIFI_STA_RETRY_INTERVAL_MS 30000
 
+// ---------------------------------------------------------------------------
+// Synchronisation NTP
+// ---------------------------------------------------------------------------
+#define NTP_SERVER_1 "pool.ntp.org"
+#define NTP_SERVER_2 "time.google.com"
+#define NTP_TZ "CET-1CEST,M3.5.0,M10.5.0/3"   // Europe/Paris, heure d'ete automatique
+#define NTP_VALID_EPOCH_MIN 1600000000UL       // seuil de validite d'un timestamp
+#define NTP_LOG_INTERVAL_MS 1000UL
+
 #endif

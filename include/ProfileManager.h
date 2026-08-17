@@ -1,5 +1,4 @@
 #pragma once
-
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
@@ -15,8 +14,14 @@ private:
     String name;
     ProfileStep steps[16];
     uint8_t stepCount = 0;
-    unsigned long startTime = 0;
+
+    uint32_t startEpoch = 0;      // persiste
+    uint32_t refMillis = 0;       // NON persiste, session courante
+    bool     refMillisValid = false;  // NON persiste
+
     bool active = false;
+
+    bool getElapsedS(uint32_t& elapsedOut) const;
 
 public:
     void start();
@@ -29,6 +34,10 @@ public:
     void clearSteps();
     bool addStep(const ProfileStep& step);
     void setName(const String& name);
+
+    bool isTimeReferenceValid() const;
+    uint32_t getStartEpoch() const;
+
     void toJson(JsonObject& json) const;
     void fromJson(const JsonObjectConst& json);
 };
