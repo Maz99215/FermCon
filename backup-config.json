@@ -1,0 +1,19 @@
+{
+    "wifi_ssid":  "Freebox-C9928E",
+    "setpoint":  18,
+    "hysteresis":  1,
+    "min_compressor_delay":  300,
+    "temp_offset":  0,
+    "username":  "samy",
+    "mqtt_enabled":  false,
+    "mqtt_broker":  "",
+    "mqtt_port":  1883,
+    "mqtt_user":  "",
+    "mqtt_topic_prefix":  "fermcon",
+    "gf_enabled":  false,
+    "gf_endpoint":  "",
+    "gf_device_label":  "",
+    "ap_enabled":  true,
+    "ap_ssid":  "FermCon",
+    "ap_password_set":  true
+}

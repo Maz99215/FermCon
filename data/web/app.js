@@ -2,153 +2,292 @@
 // PROFIL DE TEMPÉRATURE
 // ===================================================================
 
-// Drapeau de saisie : armé quand l'utilisateur modifie le tableau
 let profileDirty = false;
-// État d'activation mémorisé depuis le serveur (bug 4)
 let profileActiveState = false;
 
-// Met à jour le libellé du bouton Enregistrer selon le drapeau
 function updateSaveButtonLabel() {
     const btn = document.getElementById('saveProfileBtn');
-    if (btn) {
-        btn.textContent = profileDirty ? 'Enregistrer le profil *' : 'Enregistrer le profil';
+    if (btn) { btn.textContent = profileDirty ? 'Enregistrer le profil *' : 'Enregistrer le profil'; }
+}
+
+function showFeedback(message, isError) {
+    const fb = document.getElementById('profileFeedback');
+    if (!fb) return;
+    fb.textContent = message;
+    fb.className = isError ? 'status-bar error' : 'status-bar connected';
+    if (!isError) {
+        setTimeout(function() {
+            if (fb.textContent === message) { fb.textContent = ''; fb.className = ''; }
+        }, 4000);
     }
 }
 
-// Fonction pour charger le profil depuis le serveur
+function buildStepRow(step) {
+    const row = document.createElement('tr');
+    const typeVal = (step && step.type !== undefined) ? Number(step.type) : 0;
+    const tempStartVal = (step && step.tempStart !== undefined) ? step.tempStart : 18;
+    const tempEndVal = (step && step.tempEnd !== undefined) ? step.tempEnd : 18;
+    const durationMin = (step && step.durationS !== undefined) ? (step.durationS / 60) : 60;
+    const isPalier = (typeVal === 0);
+
+    row.innerHTML =
+        '<td><select class="step-type">' +
+            '<option value="0"' + (typeVal === 0 ? ' selected' : '') + '>Palier</option>' +
+            '<option value="1"' + (typeVal === 1 ? ' selected' : '') + '>Rampe</option>' +
+        '</select></td>' +
+        '<td><input type="number" class="step-temp-start" step="0.1" min="-10" max="40" value="' + tempStartVal + '"></td>' +
+        '<td><input type="number" class="step-temp-end" step="0.1" min="-10" max="40" value="' + (isPalier ? tempStartVal : tempEndVal) + '"' + (isPalier ? ' disabled' : '') + '></td>' +
+        '<td><input type="number" class="step-duration" step="1" min="1" max="100000" value="' + durationMin + '"></td>' +
+        '<td><button type="button" class="step-delete">Supprimer</button></td>';
+
+    return row;
+}
+
+function bindStepRowEvents(row) {
+    const typeSelect = row.querySelector('.step-type');
+    const tempStart = row.querySelector('.step-temp-start');
+    const tempEnd = row.querySelector('.step-temp-end');
+
+    typeSelect.addEventListener('change', function() {
+        const isPalier = (parseInt(this.value, 10) === 0);
+        tempEnd.disabled = isPalier;
+        if (isPalier) {
+            tempEnd.value = tempStart.value;
+        }
+        profileDirty = true;
+        updateSaveButtonLabel();
+    });
+}
+
 async function loadProfile() {
     try {
-        const response = await fetch('/api/profile');
+        const response = await fetch('/api/profile', { credentials: 'same-origin' });
+
+        if (response.status === 401) {
+            showFeedback('Authentification requise — rechargez la page et saisissez vos identifiants', true);
+            return;
+        }
+        if (!response.ok) {
+            showFeedback('HTTP ' + response.status, true);
+            return;
+        }
+
         const profile = await response.json();
         renderProfile(profile);
     } catch (error) {
         console.error('Erreur lors du chargement du profil:', error);
+        showFeedback('Impossible de joindre le contrôleur', true);
     }
 }
 
-// Fonction pour afficher le profil dans le tableau
 function renderProfile(profile) {
-    // Toujours mettre à jour les indicateurs temps réel
-    document.getElementById('currentStep').textContent = profile.currentStep;
-    document.getElementById('currentSetpoint').textContent = profile.setpoint;
+    document.getElementById('currentStep').textContent = profile.currentStep || '';
+    document.getElementById('currentSetpoint').textContent = profile.setpoint !== undefined ? profile.setpoint : '--';
 
-    // Mémoriser l'état d'activation (bug 4)
-    profileActiveState = profile.active;
-
+    profileActiveState = profile.active === true;
     const activateBtn = document.getElementById('activateProfileBtn');
     if (activateBtn) {
         activateBtn.textContent = profileActiveState ? 'Désactiver le profil' : 'Activer le profil';
     }
 
-    // Ne pas reconstruire le tableau si une saisie est en cours (bug 1)
+    // Ne jamais ecraser une saisie en cours (drapeau arme ou champ ayant le focus)
     if (profileDirty) return;
+
+    const nameField = document.getElementById('profileName');
+    if (nameField && document.activeElement !== nameField) {
+        nameField.value = profile.name || '';
+    }
 
     const tableBody = document.querySelector('#stepsTable tbody');
     tableBody.innerHTML = '';
-
-    profile.steps.forEach(step => {
-        const row = document.createElement('tr');
-        // Cellules contenteditable (bug 3)
-        row.innerHTML = `
-            <td contenteditable="true">${step.type}</td>
-            <td contenteditable="true">${step.tempStart}</td>
-            <td contenteditable="true">${step.tempEnd}</td>
-            <td contenteditable="true">${step.durationS / 60}</td>
-        `;
-        tableBody.appendChild(row);
-    });
+    if (profile.steps && profile.steps.length > 0) {
+        profile.steps.forEach(function(step) {
+            const row = buildStepRow(step);
+            bindStepRowEvents(row);
+            tableBody.appendChild(row);
+        });
+    }
 }
 
-// Fonction pour enregistrer le profil
-async function saveProfile() {
-    const steps = [];
+function validateSteps() {
     const rows = document.querySelectorAll('#stepsTable tbody tr');
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const lineNum = i + 1;
+        const typeVal = parseInt(row.querySelector('.step-type').value, 10);
+        const tempStart = parseFloat(row.querySelector('.step-temp-start').value);
+        const tempEnd = parseFloat(row.querySelector('.step-temp-end').value);
+        const durationMin = parseFloat(row.querySelector('.step-duration').value);
 
-    rows.forEach(row => {
-        const cells = row.querySelectorAll('td');
+        if (isNaN(tempStart) || !isFinite(tempStart)) {
+            return 'Ligne ' + lineNum + ' : température début invalide.';
+        }
+        if (isNaN(tempEnd) || !isFinite(tempEnd)) {
+            return 'Ligne ' + lineNum + ' : température fin invalide.';
+        }
+        if (isNaN(durationMin) || !isFinite(durationMin) || durationMin <= 0 || !Number.isInteger(durationMin)) {
+            return 'Ligne ' + lineNum + ' : la durée doit être un entier de minutes strictement positif.';
+        }
+        if (typeVal === 1 && tempEnd === tempStart) {
+            return 'Ligne ' + lineNum + ' : une rampe avec température de fin égale à la température de début n\'a pas de sens — utilisez un palier.';
+        }
+    }
+    return null;
+}
+
+async function saveProfile() {
+    const error = validateSteps();
+    if (error) {
+        showFeedback(error, true);
+        return;
+    }
+
+    const rows = document.querySelectorAll('#stepsTable tbody tr');
+    const steps = [];
+    rows.forEach(function(row) {
+        const typeVal = parseInt(row.querySelector('.step-type').value, 10);
+        const tempStart = parseFloat(row.querySelector('.step-temp-start').value);
+        let tempEnd = parseFloat(row.querySelector('.step-temp-end').value);
+        const durationMin = parseFloat(row.querySelector('.step-duration').value);
+
+        if (typeVal === 0) {
+            tempEnd = tempStart;
+        }
+
         steps.push({
-            type: cells[0].textContent,
-            tempStart: parseFloat(cells[1].textContent),
-            tempEnd: parseFloat(cells[2].textContent),
-            durationS: parseFloat(cells[3].textContent) * 60
+            type: typeVal,
+            tempStart: tempStart,
+            tempEnd: tempEnd,
+            durationS: Math.round(durationMin * 60)
         });
     });
+
+    const payload = {
+        name: document.getElementById('profileName').value,
+        active: profileActiveState,
+        steps: steps
+    };
 
     try {
         const response = await fetch('/api/profile', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ steps })
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
         });
-        if (response.ok) {
-            alert('Profil enregistré avec succès');
-            // Désarmer le drapeau uniquement après succès, puis resynchroniser
-            profileDirty = false;
-            updateSaveButtonLabel();
-            loadProfile();
-        } else {
-            alert('Erreur lors de l\'enregistrement du profil');
+
+        if (response.status === 401) {
+            showFeedback('Authentification requise — rechargez la page et saisissez vos identifiants', true);
+            return;
         }
+        if (response.status === 400) {
+            let msg = 'Requête invalide';
+            try {
+                const errData = await response.json();
+                if (errData.error) msg = errData.error;
+            } catch (e) { /* corps non JSON */ }
+            showFeedback(msg, true);
+            return;
+        }
+        if (!response.ok) {
+            showFeedback('HTTP ' + response.status, true);
+            return;
+        }
+
+        showFeedback('Profil enregistré avec succès', false);
+        profileDirty = false;
+        updateSaveButtonLabel();
+        loadProfile();
     } catch (error) {
         console.error('Erreur lors de l\'enregistrement du profil:', error);
+        showFeedback('Impossible de joindre le contrôleur', true);
     }
 }
 
-// Fonction pour activer/désactiver le profil
 async function toggleProfileActivation(active) {
+    if (profileDirty) {
+        if (!confirm('Des modifications non enregistrées seront perdues. Continuer ?')) {
+            return;
+        }
+    }
+
+    const btn = document.getElementById('activateProfileBtn');
+    if (btn) btn.disabled = true;
+
     try {
         const response = await fetch('/api/profile/activate', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ active })
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ active: active })
         });
-        if (response.ok) {
-            alert(`Profil ${active ? 'activé' : 'désactivé'} avec succès`);
-            loadProfile(); // Rafraîchir les informations
+
+        if (response.status === 401) {
+            showFeedback('Authentification requise — rechargez la page et saisissez vos identifiants', true);
+            return;
         }
+        if (response.status === 400) {
+            let msg = 'Requête invalide';
+            try {
+                const errData = await response.json();
+                if (errData.error) msg = errData.error;
+            } catch (e) { /* corps non JSON */ }
+            showFeedback(msg, true);
+            return;
+        }
+        if (!response.ok) {
+            showFeedback('HTTP ' + response.status, true);
+            return;
+        }
+
+        showFeedback('Profil ' + (active ? 'activé' : 'désactivé') + ' avec succès', false);
+        profileDirty = false;
+        updateSaveButtonLabel();
+        loadProfile();
     } catch (error) {
         console.error('Erreur lors de la mise à jour du statut du profil:', error);
+        showFeedback('Impossible de joindre le contrôleur', true);
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
-// Événements
-document.addEventListener('DOMContentLoaded', () => {
-    // Charger le profil au chargement de la page
+document.addEventListener('DOMContentLoaded', function() {
     loadProfile();
-
-    // Rafraîchir le profil toutes les 5 secondes
     setInterval(loadProfile, 5000);
 
-    // Bouton pour ajouter une étape — arme le drapeau
-    document.getElementById('addStepBtn').addEventListener('click', () => {
-        profileDirty = true;
-        updateSaveButtonLabel();
+    document.getElementById('addStepBtn').addEventListener('click', function() {
         const tableBody = document.querySelector('#stepsTable tbody');
-        const newRow = document.createElement('tr');
-        newRow.innerHTML = `
-            <td contenteditable="true">PALIER</td>
-            <td contenteditable="true">0</td>
-            <td contenteditable="true">0</td>
-            <td contenteditable="true">0</td>
-        `;
-        tableBody.appendChild(newRow);
+        if (tableBody.querySelectorAll('tr').length >= 16) {
+            showFeedback('Maximum 16 étapes autorisées.', true);
+            return;
+        }
+        profileDirty = true;
+        updateSaveButtonLabel();
+        const row = buildStepRow({ type: 0, tempStart: 18, tempEnd: 18, durationS: 3600 });
+        bindStepRowEvents(row);
+        tableBody.appendChild(row);
     });
 
-    // Délégation d'événement : armer le drapeau sur toute saisie dans le tableau
-    document.querySelector('#stepsTable tbody').addEventListener('input', () => {
+    document.querySelector('#stepsTable tbody').addEventListener('click', function(e) {
+        if (e.target && e.target.classList.contains('step-delete')) {
+            const row = e.target.closest('tr');
+            if (row) {
+                row.remove();
+                profileDirty = true;
+                updateSaveButtonLabel();
+            }
+        }
+    });
+
+    document.querySelector('#stepsTable tbody').addEventListener('input', function() {
         profileDirty = true;
         updateSaveButtonLabel();
     });
 
-    // Bouton pour enregistrer le profil
     document.getElementById('saveProfileBtn').addEventListener('click', saveProfile);
 
-    // Bouton pour activer/désactiver le profil — utilise l'état mémorisé (bug 4)
-    document.getElementById('activateProfileBtn').addEventListener('click', () => {
+    document.getElementById('activateProfileBtn').addEventListener('click', function() {
         toggleProfileActivation(!profileActiveState);
     });
 });

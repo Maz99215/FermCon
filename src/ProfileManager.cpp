@@ -1,10 +1,32 @@
 #include "ProfileManager.h"
 #include "Config.h"
 #include <time.h>
+#include <strings.h>
 
 #ifndef NTP_VALID_EPOCH_MIN
 #define NTP_VALID_EPOCH_MIN 1600000000UL
 #endif
+
+// Accepte le type d'etape en entier (0/1) ou en texte ("PALIER"/"RAMPE"),
+// pour tolerer les anciens clients et les profils deja persistes.
+static ProfileStep::Type parseStepType(JsonVariantConst v) {
+    if (v.isNull()) return ProfileStep::PALIER;
+
+    if (v.is<const char*>()) {
+        const char* s = v.as<const char*>();
+        if (s == nullptr) return ProfileStep::PALIER;
+        if (strcasecmp(s, "RAMPE") == 0) return ProfileStep::RAMPE;
+        if (strcasecmp(s, "RAMP")  == 0) return ProfileStep::RAMPE;
+        if (strcasecmp(s, "1")     == 0) return ProfileStep::RAMPE;
+        return ProfileStep::PALIER;
+    }
+
+    if (v.is<float>() || v.is<int>()) {
+        return (v.as<int>() >= 1) ? ProfileStep::RAMPE : ProfileStep::PALIER;
+    }
+
+    return ProfileStep::PALIER;
+}
 
 void ProfileManager::start() {
     if (time(nullptr) > static_cast<time_t>(NTP_VALID_EPOCH_MIN)) {
@@ -138,17 +160,19 @@ void ProfileManager::fromJson(const JsonObjectConst& json) {
     stepCount = static_cast<uint8_t>(n);
     for (uint8_t i = 0; i < stepCount; i++) {
         JsonObjectConst step = stepsArray[i];
-        steps[i].type      = static_cast<ProfileStep::Type>(
-                                 static_cast<int>(step["type"]));
+        steps[i].type      = parseStepType(step["type"]);
         steps[i].tempStart = step["tempStart"];
         steps[i].tempEnd   = step["tempEnd"];
         steps[i].durationS = step["durationS"];
     }
 
     // L'ancienne cle "startTime" (valeur millis) est volontairement ignoree :
-    // c'etait la cause du debordement.
+    // c'etait la cause du debordement au redemarrage.
     startEpoch     = json["startEpoch"] | 0;
     refMillis      = 0;
     refMillisValid = false;
-    active         = json["active"];
+
+    // Conserve l'etat courant si la cle est absente : evite de desactiver
+    // silencieusement un profil en cours quand le client ne l'envoie pas.
+    active = json["active"] | active;
 }

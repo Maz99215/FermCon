@@ -80,6 +80,10 @@
         <!-- ===== Profil de température ===== -->
         <div class="profile-section">
             <h2>Profil de Température</h2>
+            <div class="form-group">
+              <label for="profileName">Nom du profil</label>
+              <input type="text" id="profileName" placeholder="Ale anglaise, Lager, ...">
+            </div>
             <table id="stepsTable">
                 <thead>
                     <tr>
@@ -87,6 +91,7 @@
                         <th>Température Début (°C)</th>
                         <th>Température Fin (°C)</th>
                         <th>Durée (minutes)</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -96,8 +101,9 @@
             <button id="addStepBtn">Ajouter une étape</button>
             <button id="saveProfileBtn">Enregistrer le profil</button>
             <button id="activateProfileBtn">Activer le profil</button>
+            <div id="profileFeedback"></div>
         </div>
-
+        
         <!-- ===== Statut ===== -->
         <div class="status-section">
             <h2>Statut Actuel</h2>

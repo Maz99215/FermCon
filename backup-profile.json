@@ -1,0 +1,1 @@
+{"name":"TestB","steps":[{"type":0,"tempStart":20,"tempEnd":20,"durationS":600},{"type":0,"tempStart":25,"tempEnd":25,"durationS":600}],"startEpoch":1786971610,"startTime":1786971610,"active":true,"currentStep":"Termine","setpoint":25}
