@@ -40,6 +40,11 @@ private:
     void handleProfileActivate(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
     void handleFermentationGet(AsyncWebServerRequest* request);
     void handleFermentationPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
+    void handleRestart(AsyncWebServerRequest* request);
+
+    // Redemarrage differe demande via l'API
+    volatile bool _restartRequested = false;
+    unsigned long _restartDeadline = 0;
 };
 
 #endif // WEBSERVERMANAGER_H

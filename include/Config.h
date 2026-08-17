@@ -35,4 +35,12 @@
 #define TEMP_READ_INTERVAL_MS 2000
 #define DEFAULT_SETPOINT_C 18.0f
 
+// Point d'accès Wi-Fi (SoftAP)
+#define DEFAULT_AP_SSID "FermCon"
+#define DEFAULT_AP_PASSWORD "fermcon-setup"
+#define AP_MIN_PASSWORD_LEN 8
+#define AP_MAX_CLIENTS 4
+#define WIFI_STA_CONNECT_TIMEOUT_MS 15000
+#define WIFI_STA_RETRY_INTERVAL_MS 30000
+
 #endif

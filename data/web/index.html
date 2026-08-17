@@ -25,6 +25,58 @@
             <div id="fermentDays">Jour 0</div>
         </section>
 
+        <!-- ===== Réseau (état STA/AP + configuration Wi-Fi) ===== -->
+        <section class="config">
+            <div class="card">
+                <h2>État réseau</h2>
+                <div id="netStatusBar" class="status-bar">Chargement…</div>
+                <div class="data-item">
+                    <span class="label">IP box (STA)</span>
+                    <span id="netIpSta">—</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">IP point d'accès</span>
+                    <span id="netIpAp">—</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Clients connectés à l'AP</span>
+                    <span id="netApClients">—</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Signal box</span>
+                    <span id="netRssi">—</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Configuration Wi-Fi</h2>
+                <div class="form-group">
+                    <label for="cfgWifiSsid">SSID box</label>
+                    <input type="text" id="cfgWifiSsid">
+                </div>
+                <div class="form-group">
+                    <label for="cfgWifiPassword">Mot de passe box</label>
+                    <input type="password" id="cfgWifiPassword" placeholder="laisser vide pour ne pas changer">
+                </div>
+                <div class="form-group">
+                    <input type="checkbox" id="cfgApEnabled">
+                    <label for="cfgApEnabled" style="display:inline;font-weight:normal;">Activer le point d'accès</label>
+                </div>
+                <div class="form-group">
+                    <label for="cfgApSsid">SSID du point d'accès</label>
+                    <input type="text" id="cfgApSsid">
+                </div>
+                <div class="form-group">
+                    <label for="cfgApPassword">Mot de passe du point d'accès</label>
+                    <input type="password" id="cfgApPassword" placeholder="8 caractères minimum, vide pour ne pas changer" minlength="8">
+                </div>
+                <button class="save-button" id="saveNetworkBtn">Enregistrer la configuration réseau</button>
+                <div id="netFeedback"></div>
+                <button id="restartBtn">Redémarrer le contrôleur</button>
+                <div id="restartFeedback"></div>
+            </div>
+        </section>
+
         <!-- ===== Profil de température ===== -->
         <div class="profile-section">
             <h2>Profil de Température</h2>

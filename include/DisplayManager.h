@@ -26,6 +26,7 @@ struct DisplayData {
   bool  fault;
   int   wifiRssi;       // dBm
   int   iSpindelRssi;   // dBm
+  uint8_t apClients;    // clients Wi-Fi connectes au point d'acces
 };
 
 class DisplayManager {

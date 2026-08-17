@@ -26,6 +26,9 @@ struct SystemConfig {
     bool gf_enabled;
     char gf_endpoint[128];
     char gf_device_label[40];
+    bool ap_enabled;
+    char ap_ssid[33];
+    char ap_password[65];
 };
 
 struct SystemStatus {
@@ -43,6 +46,10 @@ struct SystemStatus {
     float isp_battery;
     float isp_angle;
     uint32_t isp_last_update;
+    bool sta_connected;
+    char ip_sta[16];
+    char ip_ap[16];
+    uint8_t ap_clients;
 };
 
 class ConfigStore {
@@ -61,6 +68,9 @@ public:
     // Persistance metadonnees fermentation (/fermentation.json)
     bool saveFermentation(const FermentationInfo& info);
     bool loadFermentation(FermentationInfo& info);
+
+    // Validation mot de passe point d'acces
+    bool isApPasswordValid() const;
 
 private:
     SystemConfig _config;

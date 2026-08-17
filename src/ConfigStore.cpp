@@ -32,6 +32,9 @@ bool ConfigStore::save() {
     doc["gf_enabled"]           = _config.gf_enabled;
     doc["gf_endpoint"]          = _config.gf_endpoint;
     doc["gf_device_label"]      = _config.gf_device_label;
+    doc["ap_enabled"]           = _config.ap_enabled;
+    doc["ap_ssid"]              = _config.ap_ssid;
+    doc["ap_password"]          = _config.ap_password;
 
     File file = LittleFS.open("/config.json", "w");
     if (!file) return false;
@@ -60,6 +63,9 @@ bool ConfigStore::load() {
     _config.gf_enabled = false;
     strlcpy(_config.gf_endpoint, "", sizeof(_config.gf_endpoint));
     strlcpy(_config.gf_device_label, "", sizeof(_config.gf_device_label));
+    _config.ap_enabled = true;
+    strlcpy(_config.ap_ssid, DEFAULT_AP_SSID, sizeof(_config.ap_ssid));
+    strlcpy(_config.ap_password, DEFAULT_AP_PASSWORD, sizeof(_config.ap_password));
 
     // 2) Ecrasement par /config.json si present
     File file = LittleFS.open("/config.json", "r");
@@ -87,8 +93,21 @@ bool ConfigStore::load() {
     if (!doc["gf_enabled"].isNull())           _config.gf_enabled = doc["gf_enabled"];
     if (!doc["gf_endpoint"].isNull())          strlcpy(_config.gf_endpoint, doc["gf_endpoint"], sizeof(_config.gf_endpoint));
     if (!doc["gf_device_label"].isNull())      strlcpy(_config.gf_device_label, doc["gf_device_label"], sizeof(_config.gf_device_label));
+    if (!doc["ap_enabled"].isNull())           _config.ap_enabled = doc["ap_enabled"];
+    if (!doc["ap_ssid"].isNull())              strlcpy(_config.ap_ssid, doc["ap_ssid"], sizeof(_config.ap_ssid));
+    if (!doc["ap_password"].isNull())          strlcpy(_config.ap_password, doc["ap_password"], sizeof(_config.ap_password));
+
+    // Garde-fou : mot de passe AP trop court -> retour au defaut
+    if (_config.ap_enabled && strlen(_config.ap_password) < AP_MIN_PASSWORD_LEN) {
+        strlcpy(_config.ap_password, DEFAULT_AP_PASSWORD, sizeof(_config.ap_password));
+        Serial.println("AVERTISSEMENT: mot de passe AP trop court (< 8 car.), retour au defaut");
+    }
 
     return true;
+}
+
+bool ConfigStore::isApPasswordValid() const {
+    return strlen(_config.ap_password) >= AP_MIN_PASSWORD_LEN;
 }
 
 // ===== Persistance du profil de temperature (/profile.json) =====

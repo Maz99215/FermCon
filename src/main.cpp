@@ -25,8 +25,41 @@ WebServerManager webServer(&configStore, &ispindel, &tempCtrl, &relays, &systemS
 
 float gravityStart = 0.0f;
 unsigned long lastMqttPublish = 0;
-unsigned long lastWiFiReconnect = 0;
 
+// ---------------------------------------------------------------------------
+// wifiTask - machine a etats non bloquante pour la reconnexion STA
+// ---------------------------------------------------------------------------
+void wifiTask() {
+  static unsigned long lastAttempt = 0;
+  static bool wasConnected = false;
+
+  SystemConfig& cfg = configStore.getConfig();
+  bool connected = (WiFi.status() == WL_CONNECTED);
+
+  if (connected) {
+    if (!wasConnected) {
+      Serial.print("[WIFI] STA connecte - IP: ");
+      Serial.println(WiFi.localIP());
+      wasConnected = true;
+    }
+  } else {
+    if (wasConnected) {
+      Serial.println("[WIFI] STA deconnecte");
+      wasConnected = false;
+    }
+    if (strlen(cfg.wifi_ssid) > 0 && millis() - lastAttempt >= WIFI_STA_RETRY_INTERVAL_MS) {
+      Serial.print("[WIFI] Tentative reconnexion STA - SSID: ");
+      Serial.println(cfg.wifi_ssid);
+      WiFi.disconnect(false, false);
+      WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
+      lastAttempt = millis();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// setup
+// ---------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
   unsigned long t0 = millis();
@@ -50,25 +83,30 @@ void setup() {
   configStore.loadProfile(profile);
   configStore.loadFermentation(fermentation);
 
-  // WiFi (STA avec repli SoftAP)
+  // WiFi (AP+STA simultane permanent)
   SystemConfig& cfg = configStore.getConfig();
-  WiFi.mode(WIFI_STA);
-  if (strlen(cfg.wifi_ssid) > 0) {
-    WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
-    unsigned long t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) {
-      delay(500);
-      Serial.print(".");
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.setSleep(false);
+
+  // Demarrage SoftAP
+  if (!cfg.ap_enabled) {
+    Serial.println("[WIFI] AP desactive par configuration");
+  } else if (!configStore.isApPasswordValid()) {
+    Serial.println("[WIFI] ERREUR: mot de passe AP trop court (< 8 caracteres), AP non demarre pour securite");
+  } else {
+    if (WiFi.softAP(cfg.ap_ssid, cfg.ap_password, 1, 0, AP_MAX_CLIENTS)) {
+      Serial.print("[WIFI] AP demarre - SSID: ");
+      Serial.print(cfg.ap_ssid);
+      Serial.print(" IP: ");
+      Serial.println(WiFi.softAPIP());
+    } else {
+      Serial.println("[WIFI] ERREUR: echec demarrage AP");
     }
   }
-  if (WiFi.status() != WL_CONNECTED) {
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP("FermCon");
-    Serial.print("\nAP FermCon - IP: ");
-    Serial.println(WiFi.softAPIP());
-  } else {
-    Serial.print("\nWiFi OK - IP: ");
-    Serial.println(WiFi.localIP());
+
+  // Tentative STA non bloquante
+  if (strlen(cfg.wifi_ssid) > 0) {
+    WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
   }
 
   if (cfg.mqtt_enabled) {
@@ -83,6 +121,9 @@ void setup() {
   webServer.begin();
 }
 
+// ---------------------------------------------------------------------------
+// loop
+// ---------------------------------------------------------------------------
 void loop() {
   // Regulation prioritaire
   tempCtrl.update();
@@ -90,28 +131,38 @@ void loop() {
   float setpoint = profile.isActive() ? profile.getCurrentSetpoint() : configStore.getConfig().setpoint;
   tempCtrl.setSetpoint(setpoint);
 
-  // Redistribution iSpindel
+  bool staUp = (WiFi.status() == WL_CONNECTED);
+
+  // Redistribution iSpindel - la reception n'est jamais conditionnee
   if (ispindel.hasNewData()) {
     float t = ispindel.getTemperature();
     float g = ispindel.getGravity();
     float a = ispindel.getAngle();
     float b = ispindel.getBattery();
-    publisher.publishISpindel(t, g, a, b);
-    if (configStore.getConfig().gf_enabled) {
-      publisher.sendToGrainfather(ispindel.getName().c_str(), ispindel.getID().c_str(), t, "C", g, a, b, ispindel.getRSSI());
+
+    if (staUp) {
+      publisher.publishISpindel(t, g, a, b);
+      if (configStore.getConfig().gf_enabled) {
+        publisher.sendToGrainfather(ispindel.getName().c_str(), ispindel.getID().c_str(), t, "C", g, a, b, ispindel.getRSSI());
+      }
     }
+
     ispindel.clearNewData();
     if (g > 1.0f && gravityStart == 0.0f) gravityStart = g;
   }
 
-  // Temperature cuve vers MQTT (30 s)
-  if (millis() - lastMqttPublish >= 30000) {
+  // Temperature cuve vers MQTT (30 s) - conditionne a STA
+  if (staUp && millis() - lastMqttPublish >= 30000) {
     publisher.publishFermenterTemp(tempCtrl.getCurrentTemp());
     lastMqttPublish = millis();
   }
 
-  publisher.loop();
+  if (staUp) {
+    publisher.loop();
+  }
+
   webServer.loop();
+  wifiTask();
 
   // Etat systeme
   systemStatus.temperature   = tempCtrl.getCurrentTemp();
@@ -119,10 +170,15 @@ void loop() {
   systemStatus.relay_fridge  = relays.isCoolOn();
   systemStatus.relay_heater  = relays.isHeatOn();
   systemStatus.uptime        = millis() / 1000;
-  systemStatus.wifi_rssi     = WiFi.RSSI();
+  systemStatus.sta_connected = staUp;
+  systemStatus.wifi_rssi     = staUp ? WiFi.RSSI() : 0;
   systemStatus.heap_free_kb  = ESP.getFreeHeap() / 1024;
   systemStatus.temp_sensor_ok = !tempCtrl.isFault();
-  strlcpy(systemStatus.ip_address, WiFi.localIP().toString().c_str(), sizeof(systemStatus.ip_address));
+  strlcpy(systemStatus.ip_sta, staUp ? WiFi.localIP().toString().c_str() : "0.0.0.0", sizeof(systemStatus.ip_sta));
+  strlcpy(systemStatus.ip_ap,  WiFi.softAPIP().toString().c_str(), sizeof(systemStatus.ip_ap));
+  systemStatus.ap_clients    = (uint8_t)WiFi.softAPgetStationNum();
+  // Compatibilite ascendante : ip_address = IP STA si connectee, sinon IP AP
+  strlcpy(systemStatus.ip_address, staUp ? WiFi.localIP().toString().c_str() : WiFi.softAPIP().toString().c_str(), sizeof(systemStatus.ip_address));
   systemStatus.isp_temperature = ispindel.getTemperature();
   systemStatus.isp_gravity     = ispindel.getGravity();
   systemStatus.isp_battery     = ispindel.getBattery();
@@ -153,19 +209,13 @@ void loop() {
       profile.getCurrentStepInfo(),
       0,
       0,
-      WiFi.localIP().toString(),
+      staUp ? WiFi.localIP().toString() : String("AP ") + WiFi.softAPIP().toString(),
       tempCtrl.isFault(),
-      WiFi.RSSI(),
-      ispindel.getRSSI()
+      staUp ? WiFi.RSSI() : 0,
+      ispindel.getRSSI(),
+      systemStatus.ap_clients
     };
     display.update(d);
     lastDisp = millis();
   }
-
-  // Reconnexion WiFi
-  if (WiFi.status() != WL_CONNECTED && strlen(configStore.getConfig().wifi_ssid) > 0 && millis() - lastWiFiReconnect >= 30000) {
-    WiFi.reconnect();
-    lastWiFiReconnect = millis();
-  }
-
 }

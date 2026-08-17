@@ -110,11 +110,17 @@ void DisplayManager::forceRedraw() {
     tft.drawString(String(lastData.angle, 0) + "deg", 176, 57);
   }
 
-  // 2c) IP en pied (bas droite du bloc central)
+  // 2c) IP + compteur clients AP en pied (bas droite du bloc central)
   tft.setTextSize(1);
   tft.setTextDatum(BR_DATUM);
   tft.setTextColor(SKY);
   tft.drawString(lastData.ip, 224, 73);
+
+  // Compteur clients du point d'acces, a gauche de l'IP.
+  // Position calculee : la longueur de l'IP varie selon le DHCP.
+  int ipW = tft.textWidth(lastData.ip);
+  tft.setTextColor((lastData.apClients > 0) ? VERT : MUTED);
+  tft.drawString("AP:" + String(lastData.apClients), 224 - ipW - 6, 73);
 
   // 3) Barres d'etat (droite)
   tft.drawFastVLine(228, 0, 76, TRACK);
@@ -131,8 +137,16 @@ void DisplayManager::forceRedraw() {
   drawVerticalBar(249, lastData.iSpindelOnline ? ispForce : 0.1f, ispCol, "iS");
 
   // Signal WiFi
-  float wifiForce = clampf((lastData.wifiRssi + 100) / 50.0f, 0.0f, 1.0f);
-  uint16_t wifiCol = (wifiForce >= 0.6f) ? VERT : (wifiForce >= 0.3f) ? ORANGE : ROUGE;
+  // RSSI a 0 = STA deconnectee (convention de main.cpp), pas un signal parfait
+  float wifiForce;
+  uint16_t wifiCol;
+  if (lastData.wifiRssi == 0) {
+    wifiForce = 0.1f;
+    wifiCol   = ROUGE;
+  } else {
+    wifiForce = clampf((lastData.wifiRssi + 100) / 50.0f, 0.0f, 1.0f);
+    wifiCol   = (wifiForce >= 0.6f) ? VERT : (wifiForce >= 0.3f) ? ORANGE : ROUGE;
+  }
   drawVerticalBar(266, wifiForce, wifiCol, "Wi");
 }
 
