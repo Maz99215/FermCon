@@ -1,22 +1,31 @@
 // src/DataPublisher.cpp
 #include "DataPublisher.h"
 
-DataPublisher::DataPublisher() : mqttClient(wifiClient) {
-    mqttEnabled = false;
-    grainfatherEnabled = false;
-    lastMqttReconnectAttempt = 0;
+DataPublisher::DataPublisher()
+    : mqttClient(wifiClient),
+      mqttEnabled(false), grainfatherEnabled(false),
+      lastMqttReconnectAttempt(0),
+      gfState(GF_IDLE), gfStateEntered(0), gfRetryCount(0) {
     mqttTopicPrefix[0] = '\0';
     mqttDeviceName[0] = '\0';
     mqttUser[0] = '\0';
     mqttPassword[0] = '\0';
     grainfatherEndpoint[0] = '\0';
     grainfatherDeviceLabel[0] = '\0';
+    gfName[0] = '\0';
+    gfId[0] = '\0';
+    gfTempUnits[0] = '\0';
+    gfTemperature = 0.0f;
+    gfGravity = 0.0f;
+    gfAngle = 0.0f;
+    gfBattery = 0.0f;
+    gfRssi = 0;
 }
 
 void DataPublisher::beginMqtt(const char* broker, int port, const char* user, const char* password, const char* topicPrefix, const char* deviceName) {
     mqttClient.setServer(broker, port);
     mqttClient.setCallback([](char* topic, byte* payload, unsigned int length) {
-        // Callback MQTT (non utilisé : publication uniquement)
+        // Callback MQTT (non utilise : publication uniquement)
     });
 
     strlcpy(mqttTopicPrefix, topicPrefix, sizeof(mqttTopicPrefix));
@@ -86,7 +95,7 @@ bool DataPublisher::isMqttConnected() {
 
 void DataPublisher::configureGrainfather(const char* endpoint, const char* deviceLabel) {
     strlcpy(grainfatherEndpoint, endpoint, sizeof(grainfatherEndpoint));
-    // Ajout du suffixe _SG si absent (pour forcer les unités Specific Gravity)
+    // Ajout du suffixe _SG si absent
     String label = String(deviceLabel);
     if (!label.endsWith("_SG")) {
         label += "_SG";
@@ -96,48 +105,118 @@ void DataPublisher::configureGrainfather(const char* endpoint, const char* devic
 
 void DataPublisher::setGrainfatherEnabled(bool enabled) {
     grainfatherEnabled = enabled;
+    if (!enabled) {
+        gfState = GF_IDLE; // annule toute requete en cours
+    }
 }
 
-bool DataPublisher::sendToGrainfather(const char* name, const char* id, float temperature, const char* tempUnits, float gravity, float angle, float battery, int rssi) {
+// ---------------------------------------------------------------------------
+// requestGrainfatherSend : arme une requete non bloquante
+// ---------------------------------------------------------------------------
+bool DataPublisher::requestGrainfatherSend(const char* name, const char* id,
+                                            float temperature, const char* tempUnits,
+                                            float gravity, float angle, float battery, int rssi) {
     if (!grainfatherEnabled) return false;
     if (WiFi.status() != WL_CONNECTED) return false;
 
-    JsonDocument doc;
-    // Le champ "name" doit porter le label Grainfather (avec suffixe _SG)
-    doc["name"] = (strlen(grainfatherDeviceLabel) > 0) ? grainfatherDeviceLabel : name;
-    doc["ID"] = id;
-    doc["temperature"] = temperature;
-    doc["temp_units"] = tempUnits;
-    doc["gravity"] = gravity;
-    doc["angle"] = angle;
-    doc["battery"] = battery;
-    doc["RSSI"] = rssi;
+    // Si une requete est deja en cours, on l'ecrase (derniere mesure gagnante)
+    strlcpy(gfName, (strlen(grainfatherDeviceLabel) > 0) ? grainfatherDeviceLabel : name, sizeof(gfName));
+    strlcpy(gfId, id, sizeof(gfId));
+    gfTemperature = temperature;
+    strlcpy(gfTempUnits, tempUnits, sizeof(gfTempUnits));
+    gfGravity = gravity;
+    gfAngle = angle;
+    gfBattery = battery;
+    gfRssi = rssi;
 
-    char payload[512];
-    serializeJson(doc, payload, sizeof(payload));
+    gfState = GF_SENDING;
+    gfStateEntered = millis();
+    gfRetryCount = 0;
 
-    bool success = false;
-    int retryCount = 0;
-    const int maxRetries = 3;
+    return true;
+}
 
-    while (!success && retryCount < maxRetries) {
+// ---------------------------------------------------------------------------
+// loopGrainfather : machine a etats non bloquante
+// Aucun delay() — appelee depuis loop() a chaque iteration.
+// ---------------------------------------------------------------------------
+void DataPublisher::loopGrainfather() {
+    unsigned long now = millis();
+
+    switch (gfState) {
+    case GF_IDLE:
+        // Rien a faire
+        break;
+
+    case GF_SENDING: {
+        // Timeout de la tentative en cours ?
+        if (now - gfStateEntered > GF_TIMEOUT_MS) {
+            // Timeout : passer en retry
+            gfRetryCount++;
+            Serial.printf("[GF] timeout tentative %d/%d\n", gfRetryCount, GF_MAX_RETRIES + 1);
+            if (gfRetryCount <= GF_MAX_RETRIES) {
+                gfState = GF_RETRY_WAIT;
+                gfStateEntered = now;
+            } else {
+                Serial.println("[GF] echec definitif apres retries");
+                gfState = GF_IDLE;
+            }
+            break;
+        }
+
+        // Construire le payload JSON
+        JsonDocument doc;
+        doc["name"] = gfName;
+        doc["ID"] = gfId;
+        doc["temperature"] = gfTemperature;
+        doc["temp_units"] = gfTempUnits;
+        doc["gravity"] = gfGravity;
+        doc["angle"] = gfAngle;
+        doc["battery"] = gfBattery;
+        doc["RSSI"] = gfRssi;
+
+        char payload[512];
+        serializeJson(doc, payload, sizeof(payload));
+
+        // Tentative d'envoi HTTP (non bloquante car timeout court)
         httpClient.begin(grainfatherEndpoint);
-        httpClient.setTimeout(5000); // 5 s
+        httpClient.setTimeout(GF_TIMEOUT_MS); // aligne sur le timeout global de la machine a etats
         httpClient.addHeader("Content-Type", "application/json");
 
         int httpCode = httpClient.POST((uint8_t*)payload, strlen(payload));
-        success = (httpCode >= 200 && httpCode < 300);
         httpClient.end();
 
-        if (!success) {
-            retryCount++;
-            if (retryCount < maxRetries) {
-                delay(500); // courte attente entre essais
+        if (httpCode >= 200 && httpCode < 300) {
+            Serial.println("[GF] envoi reussi");
+            gfState = GF_IDLE;
+        } else if (httpCode == 429) {
+            // Rate-limit distant : la mesure precedente a probablement ete recue.
+            // On ne retente pas immediatement pour ne pas aggraver le blocage cote serveur.
+            Serial.println("[GF] HTTP 429 (rate-limit) - abandon sans retry, prochaine mesure iSpindel reessaiera");
+            gfState = GF_IDLE;
+        } else {
+            Serial.printf("[GF] echec HTTP %d, tentative %d/%d\n",
+                          httpCode, gfRetryCount + 1, GF_MAX_RETRIES + 1);
+            gfRetryCount++;
+            if (gfRetryCount <= GF_MAX_RETRIES) {
+                gfState = GF_RETRY_WAIT;
+                gfStateEntered = now;
+            } else {
+                Serial.println("[GF] echec definitif apres retries");
+                gfState = GF_IDLE;
             }
         }
+        break;
     }
 
-    return success;
+    case GF_RETRY_WAIT:
+        // Attente non bloquante avant nouvelle tentative
+        if (now - gfStateEntered >= GF_RETRY_DELAY_MS) {
+            gfState = GF_SENDING;
+            gfStateEntered = now;
+        }
+        break;
+    }
 }
 
 void DataPublisher::mqttReconnect() {

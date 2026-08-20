@@ -1,5 +1,95 @@
 # Changelog FermCon
 
+## [0.4.0] - 2026-08-20
+
+Chantier interface : configuration de la régulation depuis le web, fusion du profil de
+fermentation en une entité unique « Lot », et corrections issues des premiers essais sur
+matériel réel.
+
+### Ajouté
+
+- **12 paramètres de régulation configurables à runtime**, sans recompilation :
+  consigne (0,0–35,0 °C), hystérésis (0,2–5,0 °C), offset de sonde (−5,0–5,0 °C), délai
+  anti-court-cycle du compresseur (180–3600 s), marche minimale froid (60–1800 s), marche
+  minimale chaud (30–1800 s), timeout de sécurité de maintien (600–86400 s), intervalle de
+  lecture sonde (1000–30000 ms), bornes de plausibilité basse/haute (−20,0 à 5,0 °C /
+  30,0 à 60,0 °C), seuil de déclenchement du défaut sonde (10–300 s), seuil de levée du
+  défaut sonde (30–1800 s). Chaque paramètre est borné (`ConfigValidator`), avec
+  contraintes croisées (ex. écart mini plausibilité, cohérence AP) et écrêtage tracé en
+  console série en cas de dépassement.
+- **Entité « Lot »** : fusion du profil de fermentation (paliers/rampes) et du suivi de
+  fermentation (jours écoulés, étape en cours) en une seule entité, exposée par un unique
+  onglet web « Lot ». Chaque étape peut porter un nom libre (0 à 23 caractères) ; un nom
+  vide produit un libellé automatique (`Palier 18.0C`, `Rampe 18.0->21.0C (42%)`).
+- **Sélecteur d'unité de durée** par étape (minutes / heures / jours) dans le formulaire
+  Lot. La conversion en secondes est automatique côté navigateur ; l'API continue de
+  transporter la durée en secondes.
+- **Lot actif sans étape** : un lot peut être démarré sans aucune étape définie. Il
+  compte les jours écoulés et laisse la consigne manuelle piloter la régulation.
+- **Champ `drives_setpoint`** (`/api/profile`, `/api/profile/activate`) : indique si le
+  lot pilote effectivement la consigne (`actif ET au moins une étape`). La consigne
+  manuelle n'est verrouillée que dans ce cas précis.
+- **Champ de changement du mot de passe d'accès à l'interface**, avec confirmation de
+  saisie, dans l'onglet Réseau. Suit le même principe que les mots de passe Wi-Fi/AP/MQTT
+  déjà en place : laisser vide pour ne pas changer, jamais réaffiché après enregistrement.
+- **Interface web republiée** : tableau de bord temps réel (~36 indicateurs), formulaires
+  Régulation / Lot / Réseau / Intégrations avec validation côté client, temps restant du
+  lot affiché dans l'unité la plus lisible (jours+heures, heures+minutes, ou minutes
+  seules selon la durée restante).
+- **API REST étendue** : `/api/status` complet (régulation, système, réseau, iSpindel,
+  lot), `/api/config` avec bornes (`bounds`) et indicateurs `*_password_set` (dont le mot
+  de passe d'accès), format d'erreur JSON normalisé (`code`, `message`, `field`, `min`,
+  `max`).
+- **Grainfather non bloquant** : machine à états (`GF_IDLE` / `GF_SENDING` /
+  `GF_RETRY_WAIT`), sans `delay()` dans la boucle principale.
+- **Persistance renforcée** : écriture atomique de `/config.json` et `/profile.json`
+  (fichier temporaire + renommage), `schema_version` dans `/profile.json` pour les
+  migrations futures.
+- **Migration automatique du lot au démarrage** : si un ancien fichier de fermentation
+  existe, son état (jours écoulés, démarrage) est repris dans le nouveau format Lot
+  lorsque celui-ci est inactif et sans étape ; sinon l'utilisateur est invité à redémarrer
+  son lot manuellement depuis l'interface.
+
+### Modifié
+
+- `TemperatureController` lit désormais tous ses paramètres depuis la configuration
+  persistée : plus aucune constante de régulation figée à la compilation (voir §5 du
+  README, qui documente les valeurs par défaut et leurs bornes).
+- `POST /api/setpoint` : renvoie `409 PROFILE_ACTIVE` uniquement si le lot est actif **et**
+  possède au moins une étape (`drives_setpoint`). Un lot actif sans étape laisse la
+  consigne manuelle éditable.
+- Boutons de l'interface : « Démarrer le lot » / « Arrêter le lot ».
+- `Cache-Control` : `max-age=600` sur les fichiers statiques, `no-store` sur `/api/*`.
+- Route 404 : réponse JSON normalisée `{"error":{"code":"NOT_FOUND","message":"Route inconnue"}}`.
+
+### Supprimé
+
+- Le suivi de fermentation séparé (ancien onglet « Fermentation », ancien fichier
+  `/fermentation.json`) : entièrement absorbé par l'entité Lot ci-dessus. Les anciennes
+  ancres `#profile` et `#fermentation` redirigent vers `#batch`.
+
+### Corrigé
+
+- **Débordement d'affichage de la densité iSpindel sur le TFT** : la valeur (ex.
+  "1.048") débordait de sa colonne. Corrigé par une taille de police réduite et un
+  formatage `snprintf` dédié.
+- **Fuite mémoire sur les endpoints `GET`** (`/api/status`, `/api/config`, `/api/profile`) :
+  des réponses HTTP étaient allouées puis jamais envoyées ni libérées sur certains
+  chemins, épuisant progressivement le tas et provoquant des échecs d'authentification
+  aléatoires après plusieurs minutes d'usage.
+- **Chemin des fichiers statiques** : correction de la racine servie par le serveur web,
+  qui pointait au mauvais niveau du système de fichiers LittleFS.
+- **Faux statut hors-ligne de l'iSpindel** : le délai de détection (10 min) était plus
+  court que l'intervalle d'envoi réel du capteur (15 min), ce qui déclenchait un
+  hors-ligne erroné entre deux mesures. Porté à 25 min.
+- **Timeout et tentatives Grainfather** : timeout HTTP réduit à 5 s, une seule tentative
+  de nouvel essai, abandon immédiat (sans retry) sur réponse `429` (limite de débit
+  atteinte côté Grainfather).
+- **Valeur de batterie absente affichée comme température** : le code `255` (batterie non
+  câblée) n'est plus interprété comme une mesure valide.
+- **Étape de durée nulle** : une étape à `durationS == 0` est désormais ignorée par le
+  calcul de consigne au lieu de bloquer la progression du lot.
+
 ## [0.2.0] - 2026-08-20
 
 ### Ajouté

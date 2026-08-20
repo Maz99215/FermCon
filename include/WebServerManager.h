@@ -6,15 +6,17 @@
 #include "ConfigStore.h"
 #include "ISpindelReceiver.h"
 #include "TemperatureController.h"
-#include "RelayController.h"
 #include "ProfileManager.h"
-#include "FermentationInfo.h"
+#include "DataPublisher.h"
 
 class WebServerManager {
 public:
-    WebServerManager(ConfigStore* cfg, ISpindelReceiver* isp, TemperatureController* temp,
-                     RelayController* relay, SystemStatus* status,
-                     ProfileManager* profile, FermentationInfo* ferment);
+    // v0.4.0 : FermentationInfo* et RelayController* retires du constructeur (BE7)
+    WebServerManager(ConfigStore* cfg, TemperatureController* temp,
+                     ISpindelReceiver* isp, SystemStatus* status,
+                     ProfileManager* profile,
+                     DataPublisher* publisher);
+
     void begin();
     void loop();
 
@@ -23,12 +25,13 @@ private:
     ConfigStore* configStore;
     ISpindelReceiver* ispindelReceiver;
     TemperatureController* temperatureController;
-    RelayController* relayController;
     SystemStatus* systemStatus;
     ProfileManager* profileManager;
-    FermentationInfo* fermentationInfo;
+    DataPublisher* dataPublisher;
 
     bool authenticate(AsyncWebServerRequest* request);
+
+    // Handlers
     void handleISpindel(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
     void handleStatus(AsyncWebServerRequest* request);
     void handleConfigGet(AsyncWebServerRequest* request);
@@ -37,11 +40,16 @@ private:
     void handleProfileGet(AsyncWebServerRequest* request);
     void handleProfilePost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
     void handleProfileActivate(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
-    void handleFermentationGet(AsyncWebServerRequest* request);
-    void handleFermentationPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
     void handleRestart(AsyncWebServerRequest* request);
+    void handleNotFound(AsyncWebServerRequest* request);
 
-    // Redemarrage differe demande via l'API
+    // Helpers
+    void sendJson(AsyncWebServerRequest* request, int code, const JsonDocument& doc);
+    void sendError(AsyncWebServerRequest* request, int httpCode, const char* errorCode,
+                   const char* message, const char* field = nullptr,
+                   float minVal = 0, float maxVal = 0);
+
+    // Redemarrage differe
     volatile bool _restartRequested = false;
     unsigned long _restartDeadline = 0;
 };

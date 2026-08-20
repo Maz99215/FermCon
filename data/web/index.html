@@ -1,116 +1,512 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FermCon - Contrôleur de Fermentation</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FermCon</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>FermCon</h1>
 
-        <!-- ===== Fermentation (libellé d'étape + jours) ===== -->
-        <section class="fermentation-section">
-            <h2>Fermentation</h2>
-            <div>
-                <label for="stageName">Étape :</label>
-                <input type="text" id="stageName" name="stageName" placeholder="Primaire, Garde, Cold crash...">
-            </div>
-            <div>
-                <button id="saveButton">Enregistrer</button>
-                <button id="startButton">Démarrer le lot</button>
-                <button id="resetButton">Réinitialiser</button>
-            </div>
-            <div id="fermentDays">Jour 0</div>
-        </section>
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <h1 class="header-title">FermCon</h1>
+    <input type="checkbox" id="menuToggle" class="menu-toggle">
+    <label for="menuToggle" id="menuToggleLabel" class="menu-toggle-label" aria-label="Menu">
+      <span class="menu-toggle-bar"></span>
+      <span class="menu-toggle-bar"></span>
+      <span class="menu-toggle-bar"></span>
+    </label>
+  </header>
 
-        <!-- ===== Réseau (état STA/AP + configuration Wi-Fi) ===== -->
-        <section class="config">
-            <div class="card">
-                <h2>État réseau</h2>
-                <div id="netStatusBar" class="status-bar">Chargement…</div>
-                <div class="data-item">
-                    <span class="label">IP box (STA)</span>
-                    <span id="netIpSta">—</span>
-                </div>
-                <div class="data-item">
-                    <span class="label">IP point d'accès</span>
-                    <span id="netIpAp">—</span>
-                </div>
-                <div class="data-item">
-                    <span class="label">Clients connectés à l'AP</span>
-                    <span id="netApClients">—</span>
-                </div>
-                <div class="data-item">
-                    <span class="label">Signal box</span>
-                    <span id="netRssi">—</span>
-                </div>
-            </div>
+  <!-- ===== NAVIGATION ===== -->
+  <nav id="mainNav" class="main-nav">
+    <button class="tab-btn active" data-tab="dashboard" id="tabDashboard">Tableau de bord</button>
+    <button class="tab-btn" data-tab="regulation" id="tabRegulation">Régulation</button>
+    <button class="tab-btn" data-tab="batch" id="tabBatch">Lot</button>
+    <button class="tab-btn" data-tab="network" id="tabNetwork">Réseau</button>
+    <button class="tab-btn" data-tab="integrations" id="tabIntegrations">Intégrations</button>
+  </nav>
 
-            <div class="card">
-                <h2>Configuration Wi-Fi</h2>
-                <div class="form-group">
-                    <label for="cfgWifiSsid">SSID box</label>
-                    <input type="text" id="cfgWifiSsid">
-                </div>
-                <div class="form-group">
-                    <label for="cfgWifiPassword">Mot de passe box</label>
-                    <input type="password" id="cfgWifiPassword" placeholder="laisser vide pour ne pas changer">
-                </div>
-                <div class="form-group">
-                    <input type="checkbox" id="cfgApEnabled">
-                    <label for="cfgApEnabled" style="display:inline;font-weight:normal;">Activer le point d'accès</label>
-                </div>
-                <div class="form-group">
-                    <label for="cfgApSsid">SSID du point d'accès</label>
-                    <input type="text" id="cfgApSsid">
-                </div>
-                <div class="form-group">
-                    <label for="cfgApPassword">Mot de passe du point d'accès</label>
-                    <input type="password" id="cfgApPassword" placeholder="8 caractères minimum, vide pour ne pas changer" minlength="8">
-                </div>
-                <button class="save-button" id="saveNetworkBtn">Enregistrer la configuration réseau</button>
-                <div id="netFeedback"></div>
-                <button id="restartBtn">Redémarrer le contrôleur</button>
-                <div id="restartFeedback"></div>
-            </div>
-        </section>
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="main-content">
 
-        <!-- ===== Profil de température ===== -->
-        <div class="profile-section">
-            <h2>Profil de Température</h2>
-            <div class="form-group">
-              <label for="profileName">Nom du profil</label>
-              <input type="text" id="profileName" placeholder="Ale anglaise, Lager, ...">
-            </div>
-            <table id="stepsTable">
-                <thead>
-                    <tr>
-                        <th>Type</th>
-                        <th>Température Début (°C)</th>
-                        <th>Température Fin (°C)</th>
-                        <th>Durée (minutes)</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <!-- Les étapes seront ajoutées ici dynamiquement -->
-                </tbody>
-            </table>
-            <button id="addStepBtn">Ajouter une étape</button>
-            <button id="saveProfileBtn">Enregistrer le profil</button>
-            <button id="activateProfileBtn">Activer le profil</button>
-            <div id="profileFeedback"></div>
+    <!-- ================================================================ -->
+    <!-- TABLEAU DE BORD                                                   -->
+    <!-- ================================================================ -->
+    <section id="panelDashboard" class="tab-panel active">
+
+      <div class="dashboard-grid">
+
+        <!-- Régulation -->
+        <div class="card">
+          <h2 class="card-title">Régulation</h2>
+          <div class="data-row">
+            <span class="data-label">Température</span>
+            <span class="data-value data-value-lg" id="dashTempValue">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Consigne</span>
+            <span class="data-value" id="dashSetpointValue">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">État</span>
+            <span class="data-value" id="dashStateValue">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Froid</span>
+            <span class="indicator" id="dashRelayFridge">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Chaud</span>
+            <span class="indicator" id="dashRelayHeater">--</span>
+          </div>
         </div>
-        
-        <!-- ===== Statut ===== -->
-        <div class="status-section">
-            <h2>Statut Actuel</h2>
-            <p>Étape courante: <span id="currentStep"></span></p>
-            <p>Consigne actuelle: <span id="currentSetpoint"></span> °C</p>
+
+        <!-- Sonde -->
+        <div class="card">
+          <h2 class="card-title">Sonde</h2>
+          <div class="data-row">
+            <span class="data-label">État sonde</span>
+            <span class="data-value" id="dashSensorOk">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Défaut en cours</span>
+            <span class="data-value" id="dashFaultPending">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Nb défauts</span>
+            <span class="data-value" id="dashFaultCount">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Mesure valide</span>
+            <span class="data-value" id="dashHasValidReading">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Dernier défaut</span>
+            <span class="data-value" id="dashLastFaultEpoch">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Dernière mesure rejetée</span>
+            <span class="data-value" id="dashLastRejectedReading">--</span>
+          </div>
         </div>
-    </div>
-    <script src="app.js"></script>
+
+        <!-- iSpindel -->
+        <div class="card">
+          <h2 class="card-title">iSpindel</h2>
+          <div class="data-row">
+            <span class="data-label">Statut</span>
+            <span class="data-value" id="dashIspOnline">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Température</span>
+            <span class="data-value" id="dashIspTemp">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Densité</span>
+            <span class="data-value" id="dashIspGravity">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Angle</span>
+            <span class="data-value" id="dashIspAngle">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Batterie</span>
+            <span class="data-value" id="dashIspBattery">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">RSSI</span>
+            <span class="data-value" id="dashIspRssi">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Âge</span>
+            <span class="data-value" id="dashIspAge">--</span>
+          </div>
+        </div>
+
+        <!-- Réseau & MQTT -->
+        <div class="card">
+          <h2 class="card-title">Réseau</h2>
+          <div class="data-row">
+            <span class="data-label">WiFi box</span>
+            <span class="data-value" id="dashStaConnected">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">IP box</span>
+            <span class="data-value" id="dashIpSta">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">IP AP</span>
+            <span class="data-value" id="dashIpAp">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Clients AP</span>
+            <span class="data-value" id="dashApClients">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Signal</span>
+            <span class="data-value" id="dashWifiRssi">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">MQTT</span>
+            <span class="data-value" id="dashMqttConnected">--</span>
+          </div>
+        </div>
+
+        <!-- Lot (fusion Profil + Fermentation) -->
+        <div class="card">
+          <h2 class="card-title">Lot</h2>
+          <div class="data-row">
+            <span class="data-label">Nom</span>
+            <span class="data-value" id="dashBatchName">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Statut</span>
+            <span class="data-value" id="dashBatchStatus">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Jours</span>
+            <span class="data-value" id="dashBatchDays">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Étape</span>
+            <span class="data-value" id="dashBatchStage">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Progression</span>
+            <span class="data-value" id="dashBatchProgress">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Temps restant</span>
+            <span class="data-value" id="dashBatchRemaining">--</span>
+          </div>
+        </div>
+
+        <!-- Système -->
+        <div class="card">
+          <h2 class="card-title">Système</h2>
+          <div class="data-row">
+            <span class="data-label">Firmware</span>
+            <span class="data-value" id="dashFwVersion">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Config</span>
+            <span class="data-value" id="dashConfigVersion">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Uptime</span>
+            <span class="data-value" id="dashUptime">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">RAM libre</span>
+            <span class="data-value" id="dashHeapFree">--</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- RÉGULATION                                                       -->
+    <!-- ================================================================ -->
+    <section id="panelRegulation" class="tab-panel">
+
+      <form id="regForm" class="form" autocomplete="off">
+        <div class="card">
+          <h2 class="card-title">Paramètres de régulation</h2>
+
+          <div class="form-group">
+            <label for="regSetpoint">Consigne (°C)</label>
+            <input type="number" id="regSetpoint" name="setpoint" step="0.1">
+            <span class="form-range" id="regSetpointRange"></span>
+            <span class="form-hint batch-setpoint-hint hidden" id="regSetpointHint"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regHysteresis">Hystérésis (°C)</label>
+            <input type="number" id="regHysteresis" name="hysteresis" step="0.1">
+            <span class="form-range" id="regHysteresisRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regTempOffset">Offset sonde (°C)</label>
+            <input type="number" id="regTempOffset" name="temp_offset" step="0.1">
+            <span class="form-range" id="regTempOffsetRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regMinCompressorDelay">Délai mini compresseur (s)</label>
+            <input type="number" id="regMinCompressorDelay" name="min_compressor_delay">
+            <span class="form-range" id="regMinCompressorDelayRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regCoolMinOnS">Marche mini froid (s)</label>
+            <input type="number" id="regCoolMinOnS" name="cool_min_on_s">
+            <span class="form-range" id="regCoolMinOnSRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regHeatMinOnS">Marche mini chaud (s)</label>
+            <input type="number" id="regHeatMinOnS" name="heat_min_on_s">
+            <span class="form-range" id="regHeatMinOnSRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regMaxOnTimeoutS">Timeout max maintien (s)</label>
+            <input type="number" id="regMaxOnTimeoutS" name="max_on_timeout_s">
+            <span class="form-range" id="regMaxOnTimeoutSRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regTempReadIntervalMs">Intervalle lecture sonde (ms)</label>
+            <input type="number" id="regTempReadIntervalMs" name="temp_read_interval_ms">
+            <span class="form-range" id="regTempReadIntervalMsRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regTempPlausibleMinC">Plage plausible min (°C)</label>
+            <input type="number" id="regTempPlausibleMinC" name="temp_plausible_min_c" step="0.1">
+            <span class="form-range" id="regTempPlausibleMinCRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regTempPlausibleMaxC">Plage plausible max (°C)</label>
+            <input type="number" id="regTempPlausibleMaxC" name="temp_plausible_max_c" step="0.1">
+            <span class="form-range" id="regTempPlausibleMaxCRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regTempFaultTripS">Défaut — déclenchement (s)</label>
+            <input type="number" id="regTempFaultTripS" name="temp_fault_trip_s">
+            <span class="form-range" id="regTempFaultTripSRange"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="regTempFaultClearS">Défaut — reprise (s)</label>
+            <input type="number" id="regTempFaultClearS" name="temp_fault_clear_s">
+            <span class="form-range" id="regTempFaultClearSRange"></span>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="regSaveBtn">Enregistrer</button>
+          <div id="regFormMsg" class="form-msg"></div>
+        </div>
+      </form>
+
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- LOT (fusion Profil + Fermentation)                               -->
+    <!-- ================================================================ -->
+    <section id="panelBatch" class="tab-panel">
+
+      <div class="card">
+        <h2 class="card-title">Lot</h2>
+
+        <div class="form-group">
+          <label for="batchName">Nom du lot</label>
+          <input type="text" id="batchName" name="name" maxlength="40" placeholder="Ale anglaise, Lager...">
+        </div>
+
+        <div class="table-wrapper">
+          <table class="steps-table" id="batchStepsTable">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Début (°C)</th>
+                <th>Fin (°C)</th>
+                <th>Durée</th>
+                <th>Unité</th>
+                <th>Nom</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="batchStepsTbody">
+            </tbody>
+          </table>
+        </div>
+
+        <div class="btn-group">
+          <button type="button" class="btn btn-secondary" id="batchAddStepBtn">Ajouter une étape</button>
+          <button type="button" class="btn btn-primary" id="batchSaveBtn">Enregistrer le lot</button>
+          <button type="button" class="btn btn-accent" id="batchStartBtn">Démarrer le lot</button>
+          <button type="button" class="btn btn-danger" id="batchStopBtn">Arrêter le lot</button>
+        </div>
+        <div id="batchFormMsg" class="form-msg"></div>
+      </div>
+
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- RÉSEAU                                                           -->
+    <!-- ================================================================ -->
+    <section id="panelNetwork" class="tab-panel">
+
+      <div class="network-grid">
+
+        <!-- État -->
+        <div class="card">
+          <h2 class="card-title">État</h2>
+          <div class="data-row">
+            <span class="data-label">WiFi box</span>
+            <span class="data-value" id="netStaStatus">--</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">Point d'accès</span>
+            <span class="data-value" id="netApStatus">--</span>
+          </div>
+        </div>
+
+        <!-- WiFi -->
+        <div class="card">
+          <h2 class="card-title">Configuration WiFi</h2>
+
+          <div class="form-group">
+            <label for="netWifiSsid">SSID</label>
+            <input type="text" id="netWifiSsid" name="wifi_ssid" maxlength="32">
+          </div>
+
+          <div class="form-group">
+            <label for="netWifiPassword">Mot de passe</label>
+            <input type="password" id="netWifiPassword" name="wifi_password" maxlength="64" placeholder="Laisser vide pour ne pas changer">
+            <span class="form-hint" id="netWifiPasswordSet"></span>
+          </div>
+        </div>
+
+        <!-- Point d'accès -->
+        <div class="card">
+          <h2 class="card-title">Point d'accès</h2>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="netApEnabled" name="ap_enabled">
+              Activer le point d'accès
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label for="netApSsid">SSID AP</label>
+            <input type="text" id="netApSsid" name="ap_ssid" maxlength="32">
+          </div>
+
+          <div class="form-group">
+            <label for="netApPassword">Mot de passe AP</label>
+            <input type="password" id="netApPassword" name="ap_password" maxlength="64" minlength="8" placeholder="8 caractères minimum, vide pour ne pas changer">
+            <span class="form-hint" id="netApPasswordSet"></span>
+          </div>
+        </div>
+
+        <!-- Accès à l'interface -->
+        <div class="card">
+          <h2 class="card-title">Accès à l'interface</h2>
+
+          <div class="form-group">
+            <label for="netAccessPassword">Mot de passe d'accès</label>
+            <input type="password" id="netAccessPassword" name="password" maxlength="64" placeholder="Laisser vide pour ne pas changer">
+            <span class="form-hint" id="netAccessPasswordSet"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="netAccessPasswordConfirm">Confirmer le mot de passe</label>
+            <input type="password" id="netAccessPasswordConfirm" maxlength="64" placeholder="Retapez le mot de passe">
+          </div>
+        </div>
+
+      </div>
+
+      <div class="btn-group">
+        <button type="button" class="btn btn-primary" id="netSaveBtn">Enregistrer la configuration réseau</button>
+        <button type="button" class="btn btn-danger" id="netRestartBtn">Redémarrer le contrôleur</button>
+      </div>
+      <div id="netFormMsg" class="form-msg"></div>
+
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- INTÉGRATIONS                                                     -->
+    <!-- ================================================================ -->
+    <section id="panelIntegrations" class="tab-panel">
+
+      <div class="integrations-grid">
+
+        <!-- MQTT -->
+        <div class="card">
+          <h2 class="card-title">MQTT</h2>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="integMqttEnabled" name="mqtt_enabled">
+              Activer MQTT
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label for="integMqttBroker">Broker</label>
+            <input type="text" id="integMqttBroker" name="mqtt_broker" maxlength="63">
+          </div>
+
+          <div class="form-group">
+            <label for="integMqttPort">Port</label>
+            <input type="number" id="integMqttPort" name="mqtt_port">
+          </div>
+
+          <div class="form-group">
+            <label for="integMqttUser">Utilisateur</label>
+            <input type="text" id="integMqttUser" name="mqtt_user" maxlength="31">
+          </div>
+
+          <div class="form-group">
+            <label for="integMqttPassword">Mot de passe</label>
+            <input type="password" id="integMqttPassword" name="mqtt_password" maxlength="64" placeholder="Laisser vide pour ne pas changer">
+            <span class="form-hint" id="integMqttPasswordSet"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="integMqttTopicPrefix">Préfixe de topic</label>
+            <input type="text" id="integMqttTopicPrefix" name="mqtt_topic_prefix" maxlength="63" pattern="[A-Za-z0-9/_-]*">
+          </div>
+
+          <div class="form-group">
+            <label for="integMqttDeviceName">Nom du device</label>
+            <input type="text" id="integMqttDeviceName" name="mqtt_device_name" maxlength="31">
+          </div>
+        </div>
+
+        <!-- Grainfather -->
+        <div class="card">
+          <h2 class="card-title">Grainfather</h2>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="integGfEnabled" name="gf_enabled">
+              Activer Grainfather
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label for="integGfEndpoint">Endpoint</label>
+            <input type="url" id="integGfEndpoint" name="gf_endpoint" maxlength="128" placeholder="http://... ou https://...">
+          </div>
+
+          <div class="form-group">
+            <label for="integGfDeviceLabel">Libellé device</label>
+            <input type="text" id="integGfDeviceLabel" name="gf_device_label" maxlength="39">
+          </div>
+        </div>
+
+      </div>
+
+      <button type="button" class="btn btn-primary" id="integSaveBtn">Enregistrer</button>
+      <div id="integFormMsg" class="form-msg"></div>
+
+    </section>
+
+  </main>
+
+  <!-- ===== GLOBAL ERROR BANNER ===== -->
+  <div id="globalError" class="global-error hidden"></div>
+
+  <script type="module" src="app.js"></script>
 </body>
 </html>

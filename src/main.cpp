@@ -8,14 +8,11 @@
 #include "ISpindelReceiver.h"
 #include "DataPublisher.h"
 #include "ProfileManager.h"
-#include "FermentationInfo.h"
 #include "DisplayManager.h"
 #include "WebServerManager.h"
 #include <time.h>
 
-// Masque des coeurs idle surveilles par le Task WDT.
-// L'ESP32-C6 est monocoeur : un masque designant un coeur inexistant
-// fait echouer esp_task_wdt_init().
+// Masque des coeurs idle surveilles par le Task WDT
 #if CONFIG_FREERTOS_UNICORE
   #define TWDT_IDLE_CORE_MASK 0x01
 #else
@@ -29,10 +26,10 @@ TemperatureController tempCtrl;
 ISpindelReceiver ispindel;
 DataPublisher publisher;
 ProfileManager profile;
-FermentationInfo fermentation;
 DisplayManager display;
 SystemStatus systemStatus;
-WebServerManager webServer(&configStore, &ispindel, &tempCtrl, &relays, &systemStatus, &profile, &fermentation);
+// v0.4.0 : FermentationInfo supprime, RelayController* retire du constructeur (BE7)
+WebServerManager webServer(&configStore, &tempCtrl, &ispindel, &systemStatus, &profile, &publisher);
 
 float gravityStart = 0.0f;
 unsigned long lastMqttPublish = 0;
@@ -74,7 +71,7 @@ void ntpTask() {
 }
 
 // ---------------------------------------------------------------------------
-// wifiTask - machine a etats non bloquante pour la reconnexion STA
+// wifiTask
 // ---------------------------------------------------------------------------
 void wifiTask() {
   static unsigned long lastAttempt = 0;
@@ -108,10 +105,6 @@ void wifiTask() {
 // setup
 // ---------------------------------------------------------------------------
 void setup() {
-  // ATTENTION SECURITE : position critique, ne pas deplacer.
-  // relays.begin() doit etre la toute premiere instruction executee pour
-  // imposer le niveau inactif sur les broches relais au plus tot et
-  // eliminer le claquement audible au demarrage.
   relays.begin();
 
   Serial.begin(115200);
@@ -119,13 +112,7 @@ void setup() {
   while (!Serial && millis() - t0 < 3000) delay(10);
   Serial.println("\n[BOOT] setup entry");
 
-  // ---------------------------------------------------------------------
-  // Task WDT : initialisation (la souscription de la tache loop a lieu en
-  // fin de setup, pour ne pas surveiller les phases d'init lentes).
-  // Sur arduino-esp32 3.x le TWDT est deja initialise par le framework :
-  // esp_task_wdt_init() renvoie alors ESP_ERR_INVALID_STATE et il faut
-  // passer par esp_task_wdt_reconfigure().
-  // ---------------------------------------------------------------------
+  // Task WDT
   esp_task_wdt_config_t twdt_cfg = {
     .timeout_ms     = (uint32_t)(WDT_TIMEOUT_S * 1000),
     .idle_core_mask = TWDT_IDLE_CORE_MASK,
@@ -154,13 +141,14 @@ void setup() {
   configStore.load();
   Serial.println("[BOOT] config loaded");
 
-  tempCtrl.begin(&relays);
+  // NOUVEAU v0.3.0 : begin avec pointeur SystemConfig
+  tempCtrl.begin(&relays, configStore.getConfigPtr());
   display.begin();
   Serial.println("[BOOT] managers OK");
 
-  fermentation.begin();
+  // v0.4.0 : FermentationInfo supprime, migration /fermentation.json -> Lot
   configStore.loadProfile(profile);
-  configStore.loadFermentation(fermentation);
+  configStore.migrateFermentationToBatch(profile);
 
   // WiFi (AP+STA simultane permanent)
   SystemConfig& cfg = configStore.getConfig();
@@ -200,8 +188,7 @@ void setup() {
 
   webServer.begin();
 
-  // Souscription de la tache loop au Task WDT, une fois toutes les
-  // initialisations lentes terminees.
+  // Souscription Task WDT
   wdtErr = esp_task_wdt_add(NULL);
   if (wdtErr == ESP_OK) {
     Serial.println("[WDT] tache loop surveillee");
@@ -217,12 +204,15 @@ void setup() {
 void loop() {
   // Regulation prioritaire
   tempCtrl.update();
-  float setpoint = profile.isActive() ? profile.getCurrentSetpoint() : configStore.getConfig().setpoint;
+
+  // v0.4.0 (ADR-011) : la consigne est pilotee par le lot uniquement si
+  // active ET stepCount > 0. Sinon, SystemConfig.setpoint (consigne manuelle).
+  float setpoint = profile.drivesSetpoint()
+    ? profile.getCurrentSetpoint()
+    : configStore.getConfig().setpoint;
   tempCtrl.setSetpoint(setpoint);
 
-  // Sentinelle keep-alive : coupe les sorties si la regulation ne rearme
-  // plus la sentinelle (RELAY_KEEPALIVE_TIMEOUT_S). Log unique par
-  // occurrence pour eviter le spam a chaque tour de boucle.
+  // Sentinelle keep-alive
   static bool keepAliveLogged = false;
   if (relays.checkKeepAlive()) {
     if (!keepAliveLogged) {
@@ -235,7 +225,7 @@ void loop() {
 
   bool staUp = (WiFi.status() == WL_CONNECTED);
 
-  // Redistribution iSpindel - la reception n'est jamais conditionnee
+  // Redistribution iSpindel
   if (ispindel.hasNewData()) {
     float t = ispindel.getTemperature();
     float g = ispindel.getGravity();
@@ -244,14 +234,21 @@ void loop() {
     if (staUp) {
       publisher.publishISpindel(t, g, a, b);
       if (configStore.getConfig().gf_enabled) {
-        publisher.sendToGrainfather(ispindel.getName().c_str(), ispindel.getID().c_str(), t, "C", g, a, b, ispindel.getRSSI());
+        // NOUVEAU v0.3.0 : requestGrainfatherSend au lieu de sendToGrainfather
+        publisher.requestGrainfatherSend(ispindel.getName().c_str(), ispindel.getID().c_str(),
+                                          t, "C", g, a, b, ispindel.getRSSI());
       }
     }
     ispindel.clearNewData();
     if (g > 1.0f && gravityStart == 0.0f) gravityStart = g;
   }
 
-  // Temperature cuve vers MQTT (30 s) - conditionne a STA
+  // NOUVEAU v0.3.0 : loopGrainfather non bloquant
+  if (staUp) {
+    publisher.loopGrainfather();
+  }
+
+  // Temperature cuve vers MQTT (30 s)
   if (staUp && millis() - lastMqttPublish >= 30000) {
     publisher.publishFermenterTemp(tempCtrl.getCurrentTemp());
     lastMqttPublish = millis();
@@ -265,61 +262,149 @@ void loop() {
   wifiTask();
   ntpTask();
 
-  // Etat systeme
+  // -----------------------------------------------------------------------
+  // SystemStatus complet (etendu v0.3.0)
+  // -----------------------------------------------------------------------
   systemStatus.temperature   = tempCtrl.getCurrentTemp();
   systemStatus.setpoint      = setpoint;
+  systemStatus.state         = (uint8_t)tempCtrl.getState();
   systemStatus.relay_fridge  = relays.isCoolOn();
   systemStatus.relay_heater  = relays.isHeatOn();
+  systemStatus.temp_sensor_ok = !tempCtrl.isFault();
+  systemStatus.fault_count   = tempCtrl.getFaultCount();
+  systemStatus.last_fault_epoch = tempCtrl.getLastFaultEpoch();
+  systemStatus.last_rejected_reading = tempCtrl.getLastRejectedReading();
+  systemStatus.fault_pending = tempCtrl.isFaultPending();
+  systemStatus.has_valid_reading = tempCtrl.hasValidReading();
+
   systemStatus.uptime        = millis() / 1000;
+  systemStatus.heap_free_kb  = ESP.getFreeHeap() / 1024;
+  systemStatus.time_valid    = timeIsValid();
+
   systemStatus.sta_connected = staUp;
   systemStatus.wifi_rssi     = staUp ? WiFi.RSSI() : 0;
-  systemStatus.heap_free_kb  = ESP.getFreeHeap() / 1024;
-  systemStatus.temp_sensor_ok = !tempCtrl.isFault();
+  systemStatus.mqtt_connected = publisher.isMqttConnected();
+
   strlcpy(systemStatus.ip_sta, staUp ? WiFi.localIP().toString().c_str() : "0.0.0.0", sizeof(systemStatus.ip_sta));
   strlcpy(systemStatus.ip_ap,  WiFi.softAPIP().toString().c_str(), sizeof(systemStatus.ip_ap));
   systemStatus.ap_clients    = (uint8_t)WiFi.softAPgetStationNum();
-  // Compatibilite ascendante : ip_address = IP STA si connectee, sinon IP AP
   strlcpy(systemStatus.ip_address, staUp ? WiFi.localIP().toString().c_str() : WiFi.softAPIP().toString().c_str(), sizeof(systemStatus.ip_address));
 
+  // iSpindel
   systemStatus.isp_temperature = ispindel.getTemperature();
   systemStatus.isp_gravity     = ispindel.getGravity();
-  systemStatus.isp_battery     = ispindel.getBattery();
   systemStatus.isp_angle       = ispindel.getAngle();
+  systemStatus.isp_battery     = ispindel.getBattery();
+  systemStatus.isp_rssi        = ispindel.getRSSI();
   systemStatus.isp_last_update = ispindel.getLastUpdate();
 
-  // Affichage (500 ms)
-  static unsigned long lastDisp = 0;
-  if (millis() - lastDisp >= 500) {
-    unsigned long lastMin = ispindel.getLastUpdate() > 0 ? (millis() - ispindel.getLastUpdate()) / 60000UL : 0;
-    bool ispOnline = ispindel.getLastUpdate() > 0 && (millis() - ispindel.getLastUpdate()) < 600000UL;
-    uint8_t battPct = (uint8_t)constrain(map((long)(ispindel.getBattery() * 100), 330, 420, 0, 100), 0, 100);
-    DisplayData d = {
-      tempCtrl.getCurrentTemp(),
-      setpoint,
-      tempCtrl.isCoolOn(),
-      tempCtrl.isHeatOn(),
-      ispindel.getGravity(),
-      gravityStart,
-      ispindel.getAngle(),
-      battPct,
-      ispOnline,
-      (uint32_t)lastMin,
-      publisher.isMqttConnected(),
-      fermentation.getFermentDays(),
-      fermentation.isStarted(),
-      fermentation.getStageName(),
-      profile.getCurrentStepInfo(),
-      0,
-      0,
-      staUp ? WiFi.localIP().toString() : String("AP ") + WiFi.softAPIP().toString(),
-      tempCtrl.isFault(),
-      staUp ? WiFi.RSSI() : 0,
-      ispindel.getRSSI(),
-      systemStatus.ap_clients
-    };
-    display.update(d);
-    lastDisp = millis();
+  // isp_age_s : -1 si aucune donnee recue, sinon age en secondes
+  if (ispindel.getLastUpdate() == 0) {
+    systemStatus.isp_age_s = -1;
+  } else {
+    systemStatus.isp_age_s = (int32_t)((millis() - ispindel.getLastUpdate()) / 1000);
   }
+  systemStatus.isp_online = (systemStatus.isp_age_s >= 0 && systemStatus.isp_age_s <= ISPINDEL_ONLINE_TIMEOUT_S);
+
+  // Profil
+  systemStatus.profile_active = profile.isActive();
+  if (profile.isActive()) {
+    String stepInfo = profile.getCurrentStepInfo();
+    strlcpy(systemStatus.profile_step_label, stepInfo.c_str(), sizeof(systemStatus.profile_step_label));
+    systemStatus.profile_step_index = profile.getCurrentStepIndex();
+    systemStatus.profile_step_count = profile.getStepCount();
+    systemStatus.profile_remaining_s = profile.getRemainingS();
+  } else {
+    strlcpy(systemStatus.profile_step_label, "Inactif", sizeof(systemStatus.profile_step_label));
+    systemStatus.profile_step_index = 0;
+    systemStatus.profile_step_count = 0;
+    systemStatus.profile_remaining_s = -1;
+  }
+
+  // v0.4.0 : Fermentation alimentee depuis ProfileManager (entite Lot)
+  systemStatus.ferment_days    = profile.getFermentDays();
+  systemStatus.ferment_started = profile.isActive();
+  strlcpy(systemStatus.stage_name, profile.getStageName().c_str(), sizeof(systemStatus.stage_name));
+
+  // -----------------------------------------------------------------------
+  // DisplayData (BE4 — char[] sans String)
+  // v0.4.0 : champs fermentation alimentes depuis ProfileManager
+  // -----------------------------------------------------------------------
+  DisplayData d;
+  d.currentTemp = tempCtrl.getCurrentTemp();
+  d.setpoint    = setpoint;
+  d.coolOn      = tempCtrl.isCoolOn();
+  d.heatOn      = tempCtrl.isHeatOn();
+  d.fault       = tempCtrl.isFault();
+  d.faultCount  = tempCtrl.getFaultCount();
+
+  d.gravity      = ispindel.getGravity();
+  d.gravityStart = gravityStart;
+  d.angle        = ispindel.getAngle();
+
+  // CORRECTIF : batterie 255 si inconnue, JAMAIS de cast depuis NaN
+  if (ispindel.getLastUpdate() == 0) {
+    d.batteryPct = 255;
+  } else {
+    float bv = ispindel.getBattery();
+    if (isnan(bv) || bv <= 0.0f) {
+      d.batteryPct = 255;
+    } else {
+      long pct = map((long)(bv * 100), 330, 420, 0, 100);
+      d.batteryPct = (uint8_t)constrain(pct, 0, 100);
+    }
+  }
+
+  // ispindelOnline
+  d.ispindelOnline = (ispindel.getLastUpdate() > 0 && (millis() - ispindel.getLastUpdate()) < (unsigned long)ISPINDEL_ONLINE_TIMEOUT_S * 1000UL);
+
+  // ispindelAgeMin
+  if (ispindel.getLastUpdate() == 0) {
+    d.ispindelAgeMin = 65535;
+  } else {
+    unsigned long ageMin = (millis() - ispindel.getLastUpdate()) / 60000UL;
+    d.ispindelAgeMin = (ageMin > 65534) ? 65535 : (uint16_t)ageMin;
+  }
+
+  d.ispindelRssi = ispindel.getRSSI();
+  d.mqttConnected = publisher.isMqttConnected();
+  d.wifiRssi     = staUp ? WiFi.RSSI() : 0;
+  d.apClients    = (uint8_t)WiFi.softAPgetStationNum();
+
+  // v0.4.0 : alimentes depuis ProfileManager
+  d.fermentDays  = profile.getFermentDays();
+  d.batchStarted = profile.isActive();
+  strlcpy(d.stageName, profile.getStageName().c_str(), sizeof(d.stageName));
+
+  // profileStepLabel : char[24], tronque
+  if (profile.isActive()) {
+    String stepInfo = profile.getCurrentStepInfo();
+    strlcpy(d.profileStepLabel, stepInfo.c_str(), sizeof(d.profileStepLabel));
+  } else {
+    strlcpy(d.profileStepLabel, "Inactif", sizeof(d.profileStepLabel));
+  }
+
+  d.profileStepIndex = profile.isActive() ? profile.getCurrentStepIndex() : 0;
+  d.profileStepCount = profile.isActive() ? profile.getStepCount() : 0;
+
+  // profileRemainingH : heures restantes, -1 si inconnu
+  if (profile.isActive()) {
+    int32_t remS = profile.getRemainingS();
+    d.profileRemainingH = (remS >= 0) ? (int16_t)(remS / 3600) : -1;
+  } else {
+    d.profileRemainingH = -1;
+  }
+
+  // ip : char[16], snprintf
+  if (staUp) {
+    strlcpy(d.ip, WiFi.localIP().toString().c_str(), sizeof(d.ip));
+  } else {
+    snprintf(d.ip, sizeof(d.ip), "AP %s", WiFi.softAPIP().toString().c_str());
+  }
+
+  // NOUVEAU v0.3.0 : DisplayManager::update() appele a chaque tour de boucle
+  // (le throttle est gere dans DisplayManager, pas ici)
+  display.update(d);
 
   esp_task_wdt_reset();
 }

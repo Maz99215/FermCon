@@ -5,29 +5,35 @@
 #include "LGFX_Config.hpp"
 #include "Config.h"
 
+/**
+ * DisplayData — FIGE, aucune String.
+ * Tous les champs textuels sont des char[] de taille fixe.
+ */
 struct DisplayData {
-  float currentTemp;
+  float currentTemp;                // NaN si pas de mesure valide
   float setpoint;
   bool  coolOn;
   bool  heatOn;
-  float gravity;
-  float gravityStart;
-  float angle;
-  uint8_t battery;
-  bool  iSpindelOnline;
-  uint32_t iSpindelLastSeenMin;
+  bool  fault;
+  uint32_t faultCount;
+  float gravity;                    // NaN si inconnu
+  float gravityStart;               // NaN si inconnu
+  float angle;                      // NaN si inconnu
+  uint8_t batteryPct;               // 255 = inconnu (JAMAIS de cast depuis NaN)
+  bool  ispindelOnline;
+  uint16_t ispindelAgeMin;          // 65535 = jamais vu
+  int16_t ispindelRssi;             // 0 = inconnu
   bool  mqttConnected;
+  int16_t wifiRssi;                 // dBm
+  uint8_t apClients;
   uint16_t fermentDays;
-  bool batchStarted;
-  String stageName;
-  String profileStepLabel;
+  bool  batchStarted;
+  char  stageName[24];              // tronque, jamais de String
+  char  profileStepLabel[24];       // tronque, jamais de String
   uint8_t profileStepIndex;
   uint8_t profileStepCount;
-  String ip;
-  bool  fault;
-  int   wifiRssi;       // dBm
-  int   iSpindelRssi;   // dBm
-  uint8_t apClients;    // clients Wi-Fi connectes au point d'acces
+  int16_t profileRemainingH;        // -1 = inconnu ou profil inactif
+  char  ip[16];                     // jamais de String
 };
 
 class DisplayManager {
@@ -44,8 +50,8 @@ private:
   unsigned long lastUpdateTime;
 
   // Helpers de dessin (layout paysage 284x76)
-  void drawOutputBar();                                                     // barre SORTIE (gauche)
-  void drawVerticalBar(int x, float fraction, uint16_t color, const String& label); // barres etat (droite)
+  void drawOutputBar();
+  void drawVerticalBar(int x, float fraction, uint16_t color, const char* label);
   static float clampf(float value, float lo, float hi);
 };
 
