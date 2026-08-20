@@ -1,15 +1,5 @@
-# PlatformIO
 .pio/
-.pioenvs/
-.piolibdeps/
-
-# VS Code (config locale machine)
-.vscode/.browse.c_cpp.db*
-.vscode/c_cpp_properties.json
-.vscode/launch.json
-.vscode/ipch/
-
-# Build / divers
+.vscode/
 *.o
 *.obj
 *.bin
@@ -18,5 +8,6 @@
 __pycache__/
 .DS_Store
 Thumbs.db
-
 logs/
+backup-*.json
+*.zip

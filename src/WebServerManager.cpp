@@ -31,10 +31,6 @@ void WebServerManager::begin() {
         [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t) {
             if (!authenticate(r)) return; handleSetpoint(r, d, l, i, t); });
 
-    server.on("/api/manual", HTTP_POST, [](AsyncWebServerRequest* r) {}, NULL,
-        [this](AsyncWebServerRequest* r, uint8_t* d, size_t l, size_t i, size_t t) {
-            if (!authenticate(r)) return; handleManualControl(r, d, l, i, t); });
-
     server.on("/api/profile", HTTP_GET, [this](AsyncWebServerRequest* r) {
         if (!authenticate(r)) return; handleProfileGet(r); });
 
@@ -139,6 +135,16 @@ void WebServerManager::handleStatus(AsyncWebServerRequest* request) {
     doc["ip_sta"]          = systemStatus->ip_sta;
     doc["ip_ap"]           = systemStatus->ip_ap;
     doc["ap_clients"]      = systemStatus->ap_clients;
+
+    // Compteurs de defaut de la sonde, exposes pour diagnostic sans port serie
+    if (temperatureController) {
+        doc["fault_count"]           = temperatureController->getFaultCount();
+        doc["last_fault_epoch"]      = temperatureController->getLastFaultEpoch();
+        doc["last_rejected_reading"] = temperatureController->getLastRejectedReading();
+        doc["fault_pending"]         = temperatureController->isFaultPending();
+        doc["has_valid_reading"]     = temperatureController->hasValidReading();
+    }
+
     String out; serializeJson(doc, out);
     request->send(200, "application/json", out);
 }
@@ -297,50 +303,6 @@ void WebServerManager::handleSetpoint(AsyncWebServerRequest* request, uint8_t* d
     }
 }
 
-void WebServerManager::handleManualControl(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-    // Tampon par requete via _tempObject (corrige la concurrence du static String)
-    // malloc/free : le destructeur de AsyncWebServerRequest libere _tempObject avec free()
-    if (index == 0) {
-        if (request->_tempObject != nullptr) {
-            free(request->_tempObject);
-            request->_tempObject = nullptr;
-        }
-        request->_tempObject = malloc(total + 1);
-        if (!request->_tempObject) {
-            request->send(500, "text/plain", "Allocation failed");
-            return;
-        }
-    }
-
-    char* buf = (char*)request->_tempObject;
-    if (!buf) {
-        request->send(500, "text/plain", "Internal error");
-        return;
-    }
-    memcpy(buf + index, data, len);
-
-    if (index + len != total) return;
-    buf[total] = '\0';
-
-    JsonDocument doc;
-    // Cast const char* : force le mode copie, le document devient proprietaire de ses chaines
-    DeserializationError error = deserializeJson(doc, (const char*)buf);
-    free(buf);
-    request->_tempObject = nullptr;
-
-    if (!error) {
-        bool cool = doc["cool"] | false;
-        bool heat = doc["heat"] | false;
-        relayController->setCool(cool);   // exclusivite geree dans RelayController
-        relayController->setHeat(heat);
-        JsonDocument r; r["status"] = "success"; r["cool"] = cool; r["heat"] = heat;
-        String out; serializeJson(r, out);
-        request->send(200, "application/json", out);
-    } else {
-        request->send(400, "text/plain", "Invalid request");
-    }
-}
-
 void WebServerManager::handleProfileGet(AsyncWebServerRequest* request) {
     JsonDocument doc;
     JsonObject obj = doc.to<JsonObject>();
@@ -433,6 +395,8 @@ void WebServerManager::handleFermentationGet(AsyncWebServerRequest* request) {
     JsonDocument doc;
     doc["stageName"]   = fermentationInfo->getStageName();
     doc["fermentDays"] = fermentationInfo->getFermentDays();
+    doc["started"]    = fermentationInfo->isStarted();
+    doc["startEpoch"] = fermentationInfo->getStartEpoch();
     String out; serializeJson(doc, out);
     request->send(200, "application/json", out);
 }
@@ -481,6 +445,8 @@ void WebServerManager::handleFermentationPost(AsyncWebServerRequest* request, ui
     JsonDocument resp;
     resp["stageName"]   = fermentationInfo->getStageName();
     resp["fermentDays"] = fermentationInfo->getFermentDays();
+    resp["started"]    = fermentationInfo->isStarted();
+    resp["startEpoch"] = fermentationInfo->getStartEpoch();
     String out; serializeJson(resp, out);
     request->send(200, "application/json", out);
 }

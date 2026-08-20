@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <LittleFS.h>
+#include <esp_task_wdt.h>
 #include "ConfigStore.h"
 #include "RelayController.h"
 #include "TemperatureController.h"
@@ -11,6 +12,15 @@
 #include "DisplayManager.h"
 #include "WebServerManager.h"
 #include <time.h>
+
+// Masque des coeurs idle surveilles par le Task WDT.
+// L'ESP32-C6 est monocoeur : un masque designant un coeur inexistant
+// fait echouer esp_task_wdt_init().
+#if CONFIG_FREERTOS_UNICORE
+  #define TWDT_IDLE_CORE_MASK 0x01
+#else
+  #define TWDT_IDLE_CORE_MASK 0x03
+#endif
 
 // Instances globales
 ConfigStore configStore;
@@ -38,9 +48,7 @@ void ntpTask() {
   static unsigned long lastCheck = 0;
   static bool wasSynced = false;
   static bool wasConn = false;
-
   bool connected = (WiFi.status() == WL_CONNECTED);
-
   if (!connected) {
     wasSynced = false;
     wasConn = false;
@@ -53,7 +61,6 @@ void ntpTask() {
   if (wasSynced) return;
   if (millis() - lastCheck < NTP_LOG_INTERVAL_MS) return;
   lastCheck = millis();
-
   if (timeIsValid()) {
     wasSynced = true;
     time_t now = time(nullptr);
@@ -72,10 +79,8 @@ void ntpTask() {
 void wifiTask() {
   static unsigned long lastAttempt = 0;
   static bool wasConnected = false;
-
   SystemConfig& cfg = configStore.getConfig();
   bool connected = (WiFi.status() == WL_CONNECTED);
-
   if (connected) {
     if (!wasConnected) {
       Serial.print("[WIFI] STA connecte - IP: ");
@@ -103,10 +108,42 @@ void wifiTask() {
 // setup
 // ---------------------------------------------------------------------------
 void setup() {
+  // ATTENTION SECURITE : position critique, ne pas deplacer.
+  // relays.begin() doit etre la toute premiere instruction executee pour
+  // imposer le niveau inactif sur les broches relais au plus tot et
+  // eliminer le claquement audible au demarrage.
+  relays.begin();
+
   Serial.begin(115200);
   unsigned long t0 = millis();
   while (!Serial && millis() - t0 < 3000) delay(10);
   Serial.println("\n[BOOT] setup entry");
+
+  // ---------------------------------------------------------------------
+  // Task WDT : initialisation (la souscription de la tache loop a lieu en
+  // fin de setup, pour ne pas surveiller les phases d'init lentes).
+  // Sur arduino-esp32 3.x le TWDT est deja initialise par le framework :
+  // esp_task_wdt_init() renvoie alors ESP_ERR_INVALID_STATE et il faut
+  // passer par esp_task_wdt_reconfigure().
+  // ---------------------------------------------------------------------
+  esp_task_wdt_config_t twdt_cfg = {
+    .timeout_ms     = (uint32_t)(WDT_TIMEOUT_S * 1000),
+    .idle_core_mask = TWDT_IDLE_CORE_MASK,
+    .trigger_panic  = true
+  };
+  esp_err_t wdtErr = esp_task_wdt_init(&twdt_cfg);
+  if (wdtErr == ESP_OK) {
+    Serial.printf("[WDT] initialise (%d s)\n", WDT_TIMEOUT_S);
+  } else if (wdtErr == ESP_ERR_INVALID_STATE) {
+    wdtErr = esp_task_wdt_reconfigure(&twdt_cfg);
+    if (wdtErr == ESP_OK) {
+      Serial.printf("[WDT] reconfigure (%d s)\n", WDT_TIMEOUT_S);
+    } else {
+      Serial.printf("[WDT] ERREUR reconfigure: 0x%x\n", (int)wdtErr);
+    }
+  } else {
+    Serial.printf("[WDT] ERREUR init: 0x%x\n", (int)wdtErr);
+  }
 
   if (!LittleFS.begin(false)) {
     Serial.println("[BOOT] LittleFS MOUNT FAILED - lancer 'pio run -e esp32-c6 -t uploadfs'");
@@ -117,10 +154,10 @@ void setup() {
   configStore.load();
   Serial.println("[BOOT] config loaded");
 
-  relays.begin();
   tempCtrl.begin(&relays);
   display.begin();
   Serial.println("[BOOT] managers OK");
+
   fermentation.begin();
   configStore.loadProfile(profile);
   configStore.loadFermentation(fermentation);
@@ -155,12 +192,23 @@ void setup() {
     publisher.beginMqtt(cfg.mqtt_broker, cfg.mqtt_port, cfg.mqtt_user, cfg.mqtt_password, cfg.mqtt_topic_prefix, cfg.mqtt_device_name);
     publisher.setMqttEnabled(true);
   }
+
   if (cfg.gf_enabled) {
     publisher.configureGrainfather(cfg.gf_endpoint, cfg.gf_device_label);
     publisher.setGrainfatherEnabled(true);
   }
 
   webServer.begin();
+
+  // Souscription de la tache loop au Task WDT, une fois toutes les
+  // initialisations lentes terminees.
+  wdtErr = esp_task_wdt_add(NULL);
+  if (wdtErr == ESP_OK) {
+    Serial.println("[WDT] tache loop surveillee");
+  } else {
+    Serial.printf("[WDT] ERREUR add: 0x%x\n", (int)wdtErr);
+  }
+  esp_task_wdt_reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -169,9 +217,21 @@ void setup() {
 void loop() {
   // Regulation prioritaire
   tempCtrl.update();
-
   float setpoint = profile.isActive() ? profile.getCurrentSetpoint() : configStore.getConfig().setpoint;
   tempCtrl.setSetpoint(setpoint);
+
+  // Sentinelle keep-alive : coupe les sorties si la regulation ne rearme
+  // plus la sentinelle (RELAY_KEEPALIVE_TIMEOUT_S). Log unique par
+  // occurrence pour eviter le spam a chaque tour de boucle.
+  static bool keepAliveLogged = false;
+  if (relays.checkKeepAlive()) {
+    if (!keepAliveLogged) {
+      Serial.println("[SAFETY] sentinelle keep-alive expiree - sorties coupees");
+      keepAliveLogged = true;
+    }
+  } else {
+    keepAliveLogged = false;
+  }
 
   bool staUp = (WiFi.status() == WL_CONNECTED);
 
@@ -181,14 +241,12 @@ void loop() {
     float g = ispindel.getGravity();
     float a = ispindel.getAngle();
     float b = ispindel.getBattery();
-
     if (staUp) {
       publisher.publishISpindel(t, g, a, b);
       if (configStore.getConfig().gf_enabled) {
         publisher.sendToGrainfather(ispindel.getName().c_str(), ispindel.getID().c_str(), t, "C", g, a, b, ispindel.getRSSI());
       }
     }
-
     ispindel.clearNewData();
     if (g > 1.0f && gravityStart == 0.0f) gravityStart = g;
   }
@@ -222,6 +280,7 @@ void loop() {
   systemStatus.ap_clients    = (uint8_t)WiFi.softAPgetStationNum();
   // Compatibilite ascendante : ip_address = IP STA si connectee, sinon IP AP
   strlcpy(systemStatus.ip_address, staUp ? WiFi.localIP().toString().c_str() : WiFi.softAPIP().toString().c_str(), sizeof(systemStatus.ip_address));
+
   systemStatus.isp_temperature = ispindel.getTemperature();
   systemStatus.isp_gravity     = ispindel.getGravity();
   systemStatus.isp_battery     = ispindel.getBattery();
@@ -234,7 +293,6 @@ void loop() {
     unsigned long lastMin = ispindel.getLastUpdate() > 0 ? (millis() - ispindel.getLastUpdate()) / 60000UL : 0;
     bool ispOnline = ispindel.getLastUpdate() > 0 && (millis() - ispindel.getLastUpdate()) < 600000UL;
     uint8_t battPct = (uint8_t)constrain(map((long)(ispindel.getBattery() * 100), 330, 420, 0, 100), 0, 100);
-
     DisplayData d = {
       tempCtrl.getCurrentTemp(),
       setpoint,
@@ -248,6 +306,7 @@ void loop() {
       (uint32_t)lastMin,
       publisher.isMqttConnected(),
       fermentation.getFermentDays(),
+      fermentation.isStarted(),
       fermentation.getStageName(),
       profile.getCurrentStepInfo(),
       0,
@@ -261,4 +320,6 @@ void loop() {
     display.update(d);
     lastDisp = millis();
   }
+
+  esp_task_wdt_reset();
 }

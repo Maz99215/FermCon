@@ -18,6 +18,7 @@ struct DisplayData {
   uint32_t iSpindelLastSeenMin;
   bool  mqttConnected;
   uint16_t fermentDays;
+  bool batchStarted;
   String stageName;
   String profileStepLabel;
   uint8_t profileStepIndex;

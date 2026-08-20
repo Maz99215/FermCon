@@ -63,11 +63,17 @@ void DisplayManager::forceRedraw() {
   tft.drawFastVLine(124, 6, 58, TRACK);
 
   // 2a) Colonne temperature
-  // Header : Jxx (cyan) + nom d'etape (muted)
+  // Header : J-- (muted) si aucun lot, sinon Jxx (sky) + nom d'etape (muted)
   tft.setTextDatum(TL_DATUM);
   tft.setTextSize(1);
-  tft.setTextColor(SKY);
-  String jstr = "J" + String(lastData.fermentDays);
+  String jstr;
+  if (lastData.batchStarted) {
+    jstr = "J" + String(lastData.fermentDays);
+    tft.setTextColor(SKY);
+  } else {
+    jstr = "J--";
+    tft.setTextColor(MUTED);
+  }
   tft.drawString(jstr, 22, 2);
   tft.setTextColor(MUTED);
   tft.drawString(lastData.stageName.substring(0, 10), 22 + tft.textWidth(jstr) + 3, 2);

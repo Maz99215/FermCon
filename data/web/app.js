@@ -296,54 +296,134 @@ document.addEventListener('DOMContentLoaded', function() {
 // FERMENTATION (libellé d'étape libre + jours de fermentation)
 // ===================================================================
 document.addEventListener('DOMContentLoaded', function() {
-    // Drapeau de saisie pour le champ stageName
-    var fermentationDirty = false;
+    var fermentDirty = false;
+    var fermentStarted = false;
+
+    function formatDate(epoch) {
+        var d = new Date(epoch * 1000);
+        var day     = ('0' + d.getDate()).slice(-2);
+        var month   = ('0' + (d.getMonth() + 1)).slice(-2);
+        var year    = d.getFullYear();
+        var hours   = ('0' + d.getHours()).slice(-2);
+        var minutes = ('0' + d.getMinutes()).slice(-2);
+        return day + '/' + month + '/' + year + ' à ' + hours + ':' + minutes;
+    }
+
+    function updateFermentDisplay(data) {
+        var el = document.getElementById('fermentDays');
+        if (!data.started) {
+            el.textContent = 'Lot non démarré';
+        } else if (data.startEpoch > 1600000000) {
+            el.textContent = 'Jour ' + data.fermentDays + ' — démarré le ' + formatDate(data.startEpoch);
+        } else {
+            el.textContent = 'Jour ' + data.fermentDays + ' (date de début inconnue)';
+        }
+    }
+
+    function updateButtons(data) {
+        var startBtn = document.getElementById('startButton');
+        var resetBtn = document.getElementById('resetButton');
+        fermentStarted = data.started;
+        if (data.started) {
+            startBtn.textContent = 'Redémarrer le lot';
+            resetBtn.disabled = false;
+        } else {
+            startBtn.textContent = 'Démarrer le lot';
+            resetBtn.disabled = true;
+        }
+    }
+
+    function applyFermentationData(data) {
+        updateFermentDisplay(data);
+        updateButtons(data);
+        var stageField = document.getElementById('stageName');
+        if (!fermentDirty && document.activeElement !== stageField) {
+            stageField.value = data.stageName;
+        }
+    }
 
     function refreshFermentationData() {
-        fetch('/api/fermentation')
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                // Toujours mettre à jour le compteur de jours
-                document.getElementById('fermentDays').textContent = 'Jour ' + data.fermentDays;
-
-                // Ne réaffecter stageName que si pas de saisie en cours ET champ sans focus (bug 2)
-                var stageField = document.getElementById('stageName');
-                if (!fermentationDirty && document.activeElement !== stageField) {
-                    stageField.value = data.stageName;
+        var httpHandled = false;
+        fetch('/api/fermentation', { credentials: 'same-origin' })
+            .then(function(r) {
+                if (r.status === 401) {
+                    document.getElementById('fermentDays').textContent = 'Authentification requise';
+                    httpHandled = true;
+                    throw new Error('HTTP 401');
                 }
+                if (!r.ok) {
+                    document.getElementById('fermentDays').textContent = 'Erreur HTTP ' + r.status;
+                    httpHandled = true;
+                    throw new Error('HTTP ' + r.status);
+                }
+                return r.json();
             })
-            .catch(function(err) { console.error('Erreur:', err); });
+            .then(applyFermentationData)
+            .catch(function(err) {
+                if (!httpHandled) {
+                    document.getElementById('fermentDays').textContent = 'Contrôleur injoignable';
+                }
+                console.error('Erreur:', err);
+            });
     }
     refreshFermentationData();
     setInterval(refreshFermentationData, 5000);
 
     function postFermentation(payload) {
+        var httpHandled = false;
         return fetch('/api/fermentation', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
             body: JSON.stringify(payload)
-        }).then(function(r) { return r.json(); }).then(refreshFermentationData);
+        })
+        .then(function(r) {
+            if (r.status === 401) {
+                document.getElementById('fermentDays').textContent = 'Authentification requise';
+                httpHandled = true;
+                throw new Error('HTTP 401');
+            }
+            if (!r.ok) {
+                document.getElementById('fermentDays').textContent = 'Erreur HTTP ' + r.status;
+                httpHandled = true;
+                throw new Error('HTTP ' + r.status);
+            }
+            return r.json();
+        })
+        .then(applyFermentationData)
+        .catch(function(err) {
+            if (!httpHandled) {
+                document.getElementById('fermentDays').textContent = 'Contrôleur injoignable';
+            }
+            console.error('Erreur:', err);
+            throw err;
+        });
     }
 
-    // Armer le drapeau quand l'utilisateur tape dans le champ
     document.getElementById('stageName').addEventListener('input', function() {
-        fermentationDirty = true;
+        fermentDirty = true;
     });
 
-    // Bouton Enregistrer : désarmer le drapeau uniquement après succès
     document.getElementById('saveButton').addEventListener('click', function() {
         postFermentation({ stageName: document.getElementById('stageName').value })
-            .then(function() {
-                fermentationDirty = false;
-            });
+            .then(function() { fermentDirty = false; })
+            .catch(function() { /* erreur deja traitee dans postFermentation */ });
     });
 
-    // Boutons Démarrer / Réinitialiser : ne pas désarmer le drapeau
     document.getElementById('startButton').addEventListener('click', function() {
-        postFermentation({ action: 'start' });
+        if (fermentStarted) {
+            if (!confirm('Un lot est déjà en cours. La date de début actuelle sera remplacée et le compteur de jours repartira de zéro. Continuer ?')) {
+                return;
+            }
+        }
+        postFermentation({ action: 'start' }).catch(function() {});
     });
+
     document.getElementById('resetButton').addEventListener('click', function() {
-        postFermentation({ action: 'reset' });
+        if (!confirm('La date de début sera effacée. Continuer ?')) {
+            return;
+        }
+        postFermentation({ action: 'reset' }).catch(function() {});
     });
 });
 

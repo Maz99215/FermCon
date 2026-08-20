@@ -16,6 +16,8 @@ public:
     uint16_t getFermentDays();
     void toJson(JsonObject obj) const;
     void fromJson(const JsonObjectConst& obj);
+    bool isStarted() const { return started; }
+    uint32_t getStartEpoch() const { return startEpoch; }
 
 private:
     String stageName;

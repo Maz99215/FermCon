@@ -34,7 +34,6 @@ private:
     void handleConfigGet(AsyncWebServerRequest* request);
     void handleConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
     void handleSetpoint(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
-    void handleManualControl(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
     void handleProfileGet(AsyncWebServerRequest* request);
     void handleProfilePost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
     void handleProfileActivate(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
